@@ -25,7 +25,17 @@
       "Bash(-H \"Content-Type: application/json\")",
       "Bash(npm run sync:categories:*)",
       "Bash(pkill:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(npm run typeorm:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker compose:*)",
+      "Bash(npx dotenv -e .env -- npm run typeorm:*)",
+      "Bash(npm run migration:run:*)",
+      "Bash(npx dotenv -e .env -- npm run migration:run:*)",
+      "Bash(DATABASE_SSL=true npx dotenv -e .env -- npm run migration:run)",
+      "Bash(npm run sync:tickets:*)",
+      "Bash(npm run:*)",
+      "Bash(npx:*)"
     ],
     "deny": []
   }

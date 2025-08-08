@@ -89,6 +89,14 @@ class ApiService {
   async updateSettings(settings: any) {
     return this.api.put('/api/settings', settings)
   }
+  
+  async getAutoAssignStatus() {
+    return this.api.get('/api/settings/auto-assign')
+  }
+  
+  async updateAutoAssignStatus(enabled: boolean) {
+    return this.api.put('/api/settings/auto-assign', { enabled })
+  }
 }
 
 export const apiService = new ApiService()

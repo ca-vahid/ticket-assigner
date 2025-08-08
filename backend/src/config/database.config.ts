@@ -34,6 +34,11 @@ const dataSourceOptions: DataSourceOptions = {
   migrations: ['src/database/migrations/*.ts'],
   synchronize: false,
   logging: true,
+  ssl: process.env.DATABASE_SSL === 'true' 
+    ? {
+        rejectUnauthorized: false // Required for Azure PostgreSQL
+      }
+    : false,
 };
 
 export const dataSource = new DataSource(dataSourceOptions);

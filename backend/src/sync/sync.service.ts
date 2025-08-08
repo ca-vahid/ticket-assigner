@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { SyncAgentsCommand } from './sync-agents.command';
 import { SyncCategoriesCommand } from './sync-categories.command';
+import { SyncTicketCountsCommand } from './sync-ticket-counts.command';
 
 @Injectable()
 export class SyncService {
@@ -10,6 +11,7 @@ export class SyncService {
   constructor(
     private syncAgentsCommand: SyncAgentsCommand,
     private syncCategoriesCommand: SyncCategoriesCommand,
+    private syncTicketCountsCommand: SyncTicketCountsCommand,
   ) {}
 
   // Run sync every hour
@@ -39,15 +41,26 @@ export class SyncService {
     }
   }
 
+  async syncTicketCounts(): Promise<{ updated: number; total: number }> {
+    try {
+      const result = await this.syncTicketCountsCommand.execute();
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to sync ticket counts:', error);
+      throw error;
+    }
+  }
+
   async syncAll(): Promise<{ 
     agents: { synced: number; skipped: number };
     categories: { synced: number; skipped: number };
+    ticketCounts: { updated: number; total: number };
   }> {
     this.logger.log('🔄 Starting full sync...');
     const agents = await this.syncAgents();
     const categories = await this.syncCategories();
-    // TODO: Add VacationTracker sync
+    const ticketCounts = await this.syncTicketCounts();
     this.logger.log('✅ Full sync completed');
-    return { agents, categories };
+    return { agents, categories, ticketCounts };
   }
 }

@@ -5,6 +5,7 @@ import { StatsCards } from './stats-cards'
 import { RecentAssignments } from './recent-assignments'
 import { AgentWorkload } from './agent-workload'
 import { AssignmentAccuracy } from './assignment-accuracy'
+import { TicketAgeDistribution } from './ticket-age-distribution'
 
 export function Dashboard() {
   return (
@@ -24,7 +25,10 @@ export function Dashboard() {
           <AgentWorkload />
         </div>
 
-        <AssignmentAccuracy />
+        <div className="grid gap-6 lg:grid-cols-2">
+          <AssignmentAccuracy />
+          <TicketAgeDistribution />
+        </div>
       </div>
     </MainLayout>
   )

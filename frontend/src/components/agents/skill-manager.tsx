@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -68,6 +68,11 @@ const SKILL_CATEGORIES = {
 
 export function SkillManager({ agent, onSkillsUpdate }: SkillManagerProps) {
   const [agentSkills, setAgentSkills] = useState<string[]>(agent.skills || []);
+  
+  // Update skills when agent changes
+  useEffect(() => {
+    setAgentSkills(agent.skills || []);
+  }, [agent.id, agent.skills]);
   const [searchTerm, setSearchTerm] = useState('');
   const [customSkill, setCustomSkill] = useState('');
   const [draggedSkill, setDraggedSkill] = useState<string | null>(null);
@@ -149,131 +154,120 @@ export function SkillManager({ agent, onSkillsUpdate }: SkillManagerProps) {
   }, {} as Record<string, string[]>);
 
   return (
-    <Card className="p-6">
-      <div className="flex items-center justify-between mb-6">
+    <Card className="p-4">
+      <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <Sparkles className="h-5 w-5 text-purple-600" />
-          <h3 className="text-lg font-semibold">Skill Management</h3>
+          <Tag className="h-4 w-4 text-purple-600" />
+          <h3 className="text-sm font-semibold">Skills</h3>
+          <Badge variant="secondary" className="text-xs">
+            {agentSkills.length}
+          </Badge>
         </div>
         <Button
           size="sm"
           onClick={handleSave}
           disabled={saving}
-          className="flex items-center gap-2"
+          variant="outline"
+          className="h-7 text-xs"
         >
-          {saving ? 'Saving...' : 'Save Skills'}
+          {saving ? 'Saving...' : 'Save'}
         </Button>
       </div>
 
-      {/* Agent's Current Skills */}
-      <div className="mb-6">
-        <Label className="text-sm font-medium text-gray-700 mb-2 block">
-          Current Skills ({agentSkills.length})
-        </Label>
+      {/* Current Skills - Compact */}
+      <div className="mb-4">
         <div
           className={cn(
-            "min-h-[80px] p-4 border-2 border-dashed rounded-lg transition-colors",
-            draggedSkill && draggedIndex === null ? "border-blue-400 bg-blue-50" : "border-gray-300"
+            "min-h-[60px] p-3 border-2 border-dashed rounded-md transition-colors",
+            draggedSkill && draggedIndex === null ? "border-blue-400 bg-blue-50" : "border-gray-200"
           )}
           onDragOver={handleDragOver}
           onDrop={(e) => handleDrop(e)}
         >
           {agentSkills.length === 0 ? (
-            <div className="text-center text-gray-400 py-4">
-              <Tag className="h-8 w-8 mx-auto mb-2" />
-              <p className="text-sm">Drag skills here or click on them to add</p>
+            <div className="text-center text-gray-400 py-2">
+              <p className="text-xs">No skills assigned - add from below</p>
             </div>
           ) : (
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-1.5">
               {agentSkills.map((skill, index) => (
-                <div
+                <Badge
                   key={skill}
+                  variant="default"
+                  className="text-xs py-0.5 px-2 cursor-move"
                   draggable
                   onDragStart={() => handleDragStart(skill, index)}
                   onDragEnd={handleDragEnd}
-                  onDragOver={handleDragOver}
-                  onDrop={(e) => handleDrop(e, index)}
-                  className="group"
                 >
-                  <Badge
-                    variant="default"
-                    className="cursor-move flex items-center gap-1 px-3 py-1.5 hover:shadow-md transition-all"
+                  {skill.replace(/_/g, ' ')}
+                  <button
+                    onClick={() => handleRemoveSkill(skill)}
+                    className="ml-1 hover:text-red-300"
                   >
-                    <GripVertical className="h-3 w-3 opacity-50" />
-                    {skill.replace(/_/g, ' ')}
-                    <button
-                      onClick={() => handleRemoveSkill(skill)}
-                      className="ml-1 opacity-60 hover:opacity-100"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                </div>
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </Badge>
               ))}
             </div>
           )}
         </div>
       </div>
 
-      {/* Available Skills */}
+      {/* Available Skills - Compact */}
       <div>
-        <div className="flex items-center justify-between mb-3">
-          <Label className="text-sm font-medium text-gray-700">Available Skills</Label>
-          <div className="relative w-64">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-            <Input
-              type="text"
-              placeholder="Search skills..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-9 h-8 text-sm"
-            />
-          </div>
+        <div className="flex items-center gap-2 mb-2">
+          <Label className="text-xs font-medium text-gray-600">Add Skills</Label>
+          <Input
+            type="text"
+            placeholder="Search..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="h-7 text-xs flex-1"
+          />
         </div>
 
-        <div className="space-y-3 max-h-64 overflow-y-auto">
-          {Object.entries(filteredSkills).map(([category, skills]) => (
-            <div key={category}>
-              <div className="text-xs font-semibold text-gray-500 mb-2">{category}</div>
-              <div className="flex flex-wrap gap-2">
-                {skills.map(skill => (
-                  <Badge
-                    key={skill}
-                    variant="outline"
-                    draggable
-                    onDragStart={() => handleDragStart(skill)}
-                    onDragEnd={handleDragEnd}
-                    onClick={() => !agentSkills.includes(skill) && setAgentSkills([...agentSkills, skill])}
-                    className="cursor-pointer hover:bg-gray-100 transition-colors"
-                  >
-                    {skill.replace(/_/g, ' ')}
-                  </Badge>
-                ))}
+        <div className="space-y-2 max-h-48 overflow-y-auto border rounded-md p-2 bg-gray-50">
+          {Object.entries(filteredSkills).length === 0 ? (
+            <p className="text-xs text-gray-400 text-center py-2">No available skills</p>
+          ) : (
+            Object.entries(filteredSkills).map(([category, skills]) => (
+              <div key={category}>
+                <div className="text-xs font-semibold text-gray-500 mb-1">{category}</div>
+                <div className="flex flex-wrap gap-1">
+                  {skills.map(skill => (
+                    <Badge
+                      key={skill}
+                      variant="outline"
+                      className="text-xs py-0 px-1.5 cursor-pointer hover:bg-blue-100"
+                      onClick={() => !agentSkills.includes(skill) && setAgentSkills([...agentSkills, skill])}
+                    >
+                      + {skill.replace(/_/g, ' ')}
+                    </Badge>
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
 
-        {/* Add Custom Skill */}
-        <div className="mt-4 pt-4 border-t">
-          <Label className="text-sm font-medium text-gray-700 mb-2 block">Add Custom Skill</Label>
-          <div className="flex gap-2">
-            <Input
-              type="text"
-              placeholder="Enter custom skill..."
-              value={customSkill}
-              onChange={(e) => setCustomSkill(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleAddCustomSkill()}
-              className="flex-1"
-            />
-            <Button
-              size="sm"
-              onClick={handleAddCustomSkill}
-              disabled={!customSkill}
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
-          </div>
+        {/* Custom Skill - Compact */}
+        <div className="mt-3 flex gap-1">
+          <Input
+            type="text"
+            placeholder="Custom skill..."
+            value={customSkill}
+            onChange={(e) => setCustomSkill(e.target.value)}
+            onKeyPress={(e) => e.key === 'Enter' && handleAddCustomSkill()}
+            className="flex-1 h-7 text-xs"
+          />
+          <Button
+            size="sm"
+            onClick={handleAddCustomSkill}
+            disabled={!customSkill}
+            className="h-7 w-7 p-0"
+          >
+            <Plus className="h-3 w-3" />
+          </Button>
         </div>
       </div>
     </Card>

@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Agent, AgentLevel } from '../database/entities/agent.entity';
 import { Settings } from '../database/entities/settings.entity';
 import { ScoringResult, ScoringWeights, TicketContext } from './scoring.types';
+import { TicketWorkloadCalculator } from '../sync/ticket-workload-calculator';
 
 @Injectable()
 export class ScoringService {
@@ -13,6 +14,7 @@ export class ScoringService {
   constructor(
     @InjectRepository(Settings)
     private settingsRepository: Repository<Settings>,
+    private workloadCalculator: TicketWorkloadCalculator,
   ) {
     this.loadWeights();
   }
@@ -61,7 +63,7 @@ export class ScoringService {
       },
       eligibility: {
         isAvailable: agent.isAvailable,
-        hasCapacity: agent.currentTicketCount < agent.maxConcurrentTickets,
+        hasCapacity: (agent.weightedTicketCount || agent.currentTicketCount) < agent.maxConcurrentTickets * 0.9,
         meetsLocation: !ticket.requiresOnsite || (agent.location !== null),
         meetsLevel: this.meetsLevelRequirement(agent.level, ticket.requiredLevel)
       }
@@ -113,16 +115,26 @@ export class ScoringService {
   private calculateLoadScore(agent: Agent): number {
     if (agent.maxConcurrentTickets === 0) return 0;
     
-    const loadPercentage = agent.currentTicketCount / agent.maxConcurrentTickets;
+    // Use weighted ticket count to prevent gaming the system
+    // Agents with fresh tickets (today) have higher effective load
+    const weightedCount = agent.weightedTicketCount || agent.currentTicketCount;
+    
+    // Calculate load percentage using weighted count
+    // We consider 80% of max as "full" when using weighted counts
+    // because fresh tickets count for more
+    const effectiveMax = agent.maxConcurrentTickets * 0.8;
+    const loadPercentage = weightedCount / effectiveMax;
     
     // Inverse relationship - lower load = higher score
-    if (loadPercentage >= 1.0) return 0;
-    if (loadPercentage >= 0.9) return 0.1;
-    if (loadPercentage >= 0.8) return 0.3;
-    if (loadPercentage >= 0.7) return 0.5;
-    if (loadPercentage >= 0.5) return 0.7;
-    if (loadPercentage >= 0.3) return 0.9;
-    return 1.0;
+    // Adjusted thresholds for weighted scoring
+    if (loadPercentage >= 1.2) return 0;    // Very overloaded
+    if (loadPercentage >= 1.0) return 0.1;   // Overloaded
+    if (loadPercentage >= 0.85) return 0.2;  // Nearly full
+    if (loadPercentage >= 0.7) return 0.4;   // High load
+    if (loadPercentage >= 0.5) return 0.6;   // Moderate load
+    if (loadPercentage >= 0.3) return 0.8;   // Light load
+    if (loadPercentage >= 0.15) return 0.9;  // Very light load
+    return 1.0;  // Minimal or no load
   }
 
   private calculateLocationScore(agent: Agent, ticket: TicketContext): number {

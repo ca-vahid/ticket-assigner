@@ -96,6 +96,128 @@ export class FreshserviceService {
     }
   }
 
+  async getTickets(params?: {
+    filter?: string;
+    page?: number;
+    per_page?: number;
+    include?: string;
+    status?: number | number[];
+  }): Promise<FreshserviceTicket[]> {
+    try {
+      const tickets: FreshserviceTicket[] = [];
+      let page = params?.page || 1;
+      let hasMore = true;
+      const perPage = params?.per_page || 100;
+
+      // Build query params
+      const queryParams: any = {
+        per_page: perPage
+      };
+
+      // Add include parameter if specified
+      if (params?.include) {
+        queryParams.include = params.include;
+      }
+
+      // Add filter parameter
+      if (params?.filter) {
+        queryParams.filter = params.filter;
+      }
+      
+      // Add status filter if specified
+      if (params?.status) {
+        if (Array.isArray(params.status)) {
+          // For multiple statuses, we need to make separate requests
+          // Freshservice doesn't support OR in filter parameter
+        } else {
+          queryParams.filter = params.filter || `status:${params.status}`;
+        }
+      }
+
+      let retryCount = 0;
+      const maxRetries = 3;
+      
+      while (hasMore && page <= 50) { // Fetch up to 5000 tickets (50 pages * 100 per page)
+        try {
+          // Log progress every 5 pages
+          if (page % 5 === 0 || page === 1) {
+            this.logger.log(`Fetching tickets page ${page}... (${tickets.length} tickets so far)`);
+          }
+          
+          // Strategic pauses: Take breaks every 20 pages to reset rate limit window
+          if (page === 21 || page === 41) {
+            this.logger.log(`Taking a 8 second break at page ${page} to reset rate limits...`);
+            await new Promise(resolve => setTimeout(resolve, 8000));
+          }
+          
+          const response = await this.apiClient.get('/tickets', {
+            params: { ...queryParams, page }
+          });
+          
+          tickets.push(...(response.data.tickets || []));
+          
+          // Check if there are more pages
+          hasMore = response.data.tickets?.length === perPage;
+          
+          // If specific page was requested, don't continue
+          if (params?.page) {
+            hasMore = false;
+          }
+          
+          // Progressive delay with more aggressive slowdown
+          if (hasMore && page > 1) {
+            let delay;
+            if (page > 40) {
+              delay = 1000; // 1 second after page 40
+            } else if (page > 30) {
+              delay = 500; // 500ms for pages 31-40
+            } else if (page > 20) {
+              delay = 300; // 300ms for pages 21-30  
+            } else {
+              delay = 150; // 150ms for pages 2-20
+            }
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
+          
+          // Reset retry count on success
+          retryCount = 0;
+          page++;
+        } catch (pageError: any) {
+          // Handle rate limiting specifically
+          if (pageError.response?.status === 429) {
+            retryCount++;
+            if (retryCount > maxRetries) {
+              this.logger.error(`Failed after ${maxRetries} retries at page ${page}. Returning partial results.`);
+              break; // Exit with partial results instead of failing completely
+            }
+            
+            // Exponential backoff: 5s, 10s, 20s
+            const waitTime = Math.min(5000 * Math.pow(2, retryCount - 1), 20000);
+            this.logger.warn(`Rate limited at page ${page}, waiting ${waitTime/1000}s... (retry ${retryCount}/${maxRetries})`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+            // Don't increment page, retry the same page
+            continue;
+          }
+          // For other errors, throw
+          throw pageError;
+        }
+      }
+      
+      // Log final count
+      if (tickets.length > 0) {
+        this.logger.log(`✅ Successfully fetched ${tickets.length} tickets across ${page - 1} pages`);
+      }
+
+      return tickets;
+    } catch (error) {
+      this.logger.error('Failed to fetch tickets from Freshservice', error);
+      throw new HttpException(
+        'Failed to fetch tickets from Freshservice',
+        HttpStatus.SERVICE_UNAVAILABLE
+      );
+    }
+  }
+
   async getAgent(agentId: string): Promise<FreshserviceAgent> {
     try {
       const response = await this.apiClient.get(`/agents/${agentId}`);

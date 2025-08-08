@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Decision } from '../database/entities/decision.entity';
+import { Decision, DecisionType } from '../database/entities/decision.entity';
 
 @Injectable()
 export class DecisionsService {
@@ -14,7 +14,7 @@ export class DecisionsService {
     ticketId: string;
     ticketSubject: string;
     agentId: string;
-    type: 'AUTO_ASSIGNED' | 'SUGGESTED' | 'MANUAL_OVERRIDE' | 'REASSIGNED';
+    type: DecisionType;
     score: number;
     scoreBreakdown?: any;
     alternatives?: any[];
@@ -24,11 +24,11 @@ export class DecisionsService {
       ticketId: data.ticketId,
       ticketSubject: data.ticketSubject,
       agent: { id: data.agentId } as any,
-      type: data.type,
+      type: data.type as DecisionType,
       score: data.score,
-      scoreBreakdown: data.scoreBreakdown,
-      alternatives: data.alternatives,
-      contextData: data.contextData,
+      scoreBreakdown: data.scoreBreakdown || {},
+      alternatives: data.alternatives || [],
+      contextData: data.contextData || {},
     });
     
     return this.decisionRepository.save(decision);
@@ -58,7 +58,7 @@ export class DecisionsService {
   async updateFeedback(
     id: string,
     feedback: { wasAccepted?: boolean; feedbackScore?: number },
-  ): Promise<Decision> {
+  ): Promise<Decision | null> {
     await this.decisionRepository.update(id, feedback);
     return this.decisionRepository.findOne({ 
       where: { id },

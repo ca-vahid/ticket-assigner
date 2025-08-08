@@ -39,6 +39,28 @@ export class SyncController {
     }
   }
 
+  @Post('ticket-counts')
+  @ApiOperation({ summary: 'Sync ticket counts for all agents' })
+  @ApiResponse({ status: 200, description: 'Ticket count sync completed' })
+  async syncTicketCounts(): Promise<{ success: boolean; updated: number; total: number; message: string }> {
+    try {
+      const result = await this.syncService.syncTicketCounts();
+      return {
+        success: true,
+        updated: result.updated,
+        total: result.total,
+        message: `Updated ticket counts for ${result.updated}/${result.total} agents`
+      };
+    } catch (error) {
+      return {
+        success: false,
+        updated: 0,
+        total: 0,
+        message: `Sync failed: ${error.message}`
+      };
+    }
+  }
+
   @Post('categories')
   @ApiOperation({ summary: 'Manually sync categories from Freshservice' })
   @ApiResponse({ status: 200, description: 'Category sync completed' })
@@ -68,6 +90,7 @@ export class SyncController {
     success: boolean; 
     agents: { synced: number; skipped: number };
     categories: { synced: number; skipped: number };
+    ticketCounts: { updated: number; total: number };
     message: string 
   }> {
     try {
@@ -76,6 +99,7 @@ export class SyncController {
         success: true,
         agents: result.agents,
         categories: result.categories,
+        ticketCounts: result.ticketCounts,
         message: 'Full sync completed successfully'
       };
     } catch (error) {
@@ -83,6 +107,7 @@ export class SyncController {
         success: false,
         agents: { synced: 0, skipped: 0 },
         categories: { synced: 0, skipped: 0 },
+        ticketCounts: { updated: 0, total: 0 },
         message: `Sync failed: ${error.message}`
       };
     }

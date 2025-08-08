@@ -87,7 +87,8 @@ export function PendingAssignments() {
         <CardContent>
           <div className="space-y-4">
             {pendingAssignments.map((assignment) => {
-              const agent = agents.find(a => a.id === assignment.agentId)
+              // Find the primary assigned agent
+              const primaryAgent = agents.find(a => a.id === assignment.agentId)
               const alternatives = assignment.alternatives || []
               
               return (
@@ -111,36 +112,71 @@ export function PendingAssignments() {
                   <div className="space-y-2 mb-4">
                     <p className="text-sm font-medium text-muted-foreground">Top Suggestions:</p>
                     <div className="space-y-2">
-                      <div className="flex items-center justify-between p-2 bg-muted/50 rounded">
-                        <div className="flex items-center gap-2">
-                          <User className="h-4 w-4 text-muted-foreground" />
-                          <span className="text-sm font-medium">
-                            {agent ? `${agent.firstName} ${agent.lastName}` : 'Unknown'}
-                          </span>
-                          <Badge variant="outline" className="text-xs">
-                            Score: {(assignment.score * 100).toFixed(0)}%
-                          </Badge>
-                        </div>
-                        {agent && (
+                      {/* Show primary agent if found */}
+                      {primaryAgent ? (
+                        <div className="flex items-center justify-between p-2 bg-muted/50 rounded">
+                          <div className="flex items-center gap-2">
+                            <User className="h-4 w-4 text-muted-foreground" />
+                            <span className="text-sm font-medium">
+                              {`${primaryAgent.firstName} ${primaryAgent.lastName}`}
+                            </span>
+                            <Badge variant="default" className="text-xs">
+                              Recommended
+                            </Badge>
+                            <Badge variant="outline" className="text-xs">
+                              Score: {(assignment.score * 100).toFixed(0)}%
+                            </Badge>
+                          </div>
                           <span className="text-xs text-muted-foreground">
-                            {agent.currentTicketCount} active tickets
+                            {primaryAgent.currentTicketCount || 0} active tickets
                           </span>
-                        )}
-                      </div>
+                        </div>
+                      ) : assignment.agentId && (
+                        /* Show placeholder if agent ID exists but agent not loaded yet */
+                        <div className="flex items-center justify-between p-2 bg-muted/50 rounded">
+                          <div className="flex items-center gap-2">
+                            <User className="h-4 w-4 text-muted-foreground" />
+                            <span className="text-sm font-medium">
+                              Loading agent...
+                            </span>
+                            <Badge variant="default" className="text-xs">
+                              Recommended
+                            </Badge>
+                            <Badge variant="outline" className="text-xs">
+                              Score: {(assignment.score * 100).toFixed(0)}%
+                            </Badge>
+                          </div>
+                        </div>
+                      )}
                       
-                      {alternatives.slice(0, 2).map((alt: any, idx: number) => {
+                      {alternatives.map((alt: any, idx: number) => {
                         const altAgent = agents.find(a => a.id === alt.agentId)
+                        // Use the agent name from alternatives if agent not found in list
+                        const agentName = altAgent 
+                          ? `${altAgent.firstName} ${altAgent.lastName}` 
+                          : alt.agentName || 'Unknown'
+                        
                         return (
-                          <div key={idx} className="flex items-center justify-between p-2 rounded border">
+                          <div key={alt.agentId || idx} className="flex items-center justify-between p-2 rounded border">
                             <div className="flex items-center gap-2">
                               <User className="h-4 w-4 text-muted-foreground" />
                               <span className="text-sm">
-                                {altAgent ? `${altAgent.firstName} ${altAgent.lastName}` : alt.agentName || 'Unknown'}
+                                {agentName}
                               </span>
+                              {idx === 0 && !primaryAgent && (
+                                <Badge variant="secondary" className="text-xs">
+                                  Alternative
+                                </Badge>
+                              )}
                               <Badge variant="outline" className="text-xs">
                                 Score: {((alt.totalScore || alt.score || 0) * 100).toFixed(0)}%
                               </Badge>
                             </div>
+                            {altAgent && (
+                              <span className="text-xs text-muted-foreground">
+                                {altAgent.currentTicketCount || 0} active tickets
+                              </span>
+                            )}
                           </div>
                         )
                       })}
@@ -155,14 +191,16 @@ export function PendingAssignments() {
                     >
                       Review & Assign
                     </Button>
-                    <Button 
-                      size="sm" 
-                      variant="outline"
-                      onClick={() => handleAssign(assignment.ticketId, assignment.agentId)}
-                    >
-                      <CheckCircle className="h-4 w-4 mr-1" />
-                      Accept
-                    </Button>
+                    {primaryAgent && (
+                      <Button 
+                        size="sm" 
+                        variant="outline"
+                        onClick={() => handleAssign(assignment.ticketId, assignment.agentId)}
+                      >
+                        <CheckCircle className="h-4 w-4 mr-1" />
+                        Accept
+                      </Button>
+                    )}
                   </div>
                 </div>
               )

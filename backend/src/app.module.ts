@@ -16,6 +16,7 @@ import { SyncModule } from './sync/sync.module';
 import { AgentsModule } from './agents/agents.module';
 import { CategoriesModule } from './categories/categories.module';
 import { DecisionsModule } from './decisions/decisions.module';
+import { SettingsModule } from './settings/settings.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { DecisionsModule } from './decisions/decisions.module';
     AgentsModule,
     CategoriesModule,
     DecisionsModule,
+    SettingsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -5,6 +5,8 @@ import { Category } from '../database/entities/category.entity';
 import { FreshserviceModule } from '../integrations/freshservice/freshservice.module';
 import { SyncAgentsCommand } from './sync-agents.command';
 import { SyncCategoriesCommand } from './sync-categories.command';
+import { SyncTicketCountsCommand } from './sync-ticket-counts.command';
+import { TicketWorkloadCalculator } from './ticket-workload-calculator';
 import { SyncService } from './sync.service';
 import { SyncController } from './sync.controller';
 
@@ -14,7 +16,13 @@ import { SyncController } from './sync.controller';
     FreshserviceModule,
   ],
   controllers: [SyncController],
-  providers: [SyncAgentsCommand, SyncCategoriesCommand, SyncService],
-  exports: [SyncService],
+  providers: [
+    SyncAgentsCommand, 
+    SyncCategoriesCommand, 
+    SyncTicketCountsCommand, 
+    TicketWorkloadCalculator,
+    SyncService
+  ],
+  exports: [SyncService, TicketWorkloadCalculator],
 })
 export class SyncModule {}

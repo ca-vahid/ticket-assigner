@@ -14,11 +14,11 @@ export class CategoriesService {
     return this.categoryRepository.find();
   }
 
-  async findOne(id: string): Promise<Category> {
+  async findOne(id: string): Promise<Category | null> {
     return this.categoryRepository.findOne({ where: { id } });
   }
 
-  async findByCategoryId(categoryId: number): Promise<Category> {
+  async findByCategoryId(categoryId: number): Promise<Category | null> {
     return this.categoryRepository.findOne({ 
       where: { freshserviceId: categoryId.toString() } 
     });
@@ -29,7 +29,7 @@ export class CategoriesService {
     return this.categoryRepository.save(category);
   }
 
-  async update(id: string, data: Partial<Category>): Promise<Category> {
+  async update(id: string, data: Partial<Category>): Promise<Category | null> {
     await this.categoryRepository.update(id, data);
     return this.findOne(id);
   }

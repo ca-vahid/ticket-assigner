@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { AssignmentService } from '../assignment/assignment.service';
 import { DecisionsService } from '../decisions/decisions.service';
 import { CategoriesService } from '../categories/categories.service';
+import { DecisionType } from '../database/entities/decision.entity';
 
 @Injectable()
 export class WebhooksService {
@@ -44,6 +45,7 @@ export class WebhooksService {
 
     // Prepare ticket data for assignment
     const ticketData = {
+      ticketId: ticket.id.toString(),
       id: ticket.id.toString(),
       displayId: ticket.display_id || `INC-${ticket.id}`,
       subject: ticket.subject,
@@ -73,11 +75,11 @@ export class WebhooksService {
         await this.decisionsService.create({
           ticketId: ticketData.id,
           ticketSubject: ticketData.subject,
-          agentId: result.assignedAgent?.id,
-          type: result.confidence >= 0.7 ? 'AUTO_ASSIGNED' : 'SUGGESTED',
-          score: result.confidence,
-          scoreBreakdown: result.scoreBreakdown,
-          alternatives: result.alternatives,
+          agentId: result.assignedAgent?.id || '',
+          type: (result.confidence && result.confidence >= 0.7) ? DecisionType.AUTO_ASSIGNED : DecisionType.SUGGESTED,
+          score: result.confidence || 0,
+          scoreBreakdown: (result as any).scoreBreakdown || {},
+          alternatives: (result as any).alternatives || [],
           contextData: {
             categoryId: categoryId,
             categoryName: category.name,

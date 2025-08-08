@@ -53,6 +53,17 @@ export class Agent {
   @Column({ name: 'current_ticket_count', default: 0 })
   currentTicketCount: number;
 
+  @Column({ name: 'weighted_ticket_count', type: 'decimal', precision: 5, scale: 2, default: 0 })
+  weightedTicketCount: number;
+
+  @Column({ name: 'ticket_workload_breakdown', type: 'jsonb', nullable: true })
+  ticketWorkloadBreakdown: {
+    fresh: number;
+    recent: number;
+    stale: number;
+    abandoned: number;
+  };
+
   @Column({ name: 'max_concurrent_tickets', default: 5 })
   maxConcurrentTickets: number;
 
