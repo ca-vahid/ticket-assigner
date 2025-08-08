@@ -1,0 +1,94 @@
+version: '3.8'
+
+services:
+  # PostgreSQL is now hosted on Azure
+  # Uncomment below if you want to use local PostgreSQL instead
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: ticket-assigner-db
+  #   environment:
+  #     POSTGRES_DB: ticket_assigner
+  #     POSTGRES_USER: postgres
+  #     POSTGRES_PASSWORD: postgres
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   networks:
+  #     - ticket-assigner-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: ticket-assigner-cache
+    ports:
+      - "6379:6379"
+    command: redis-server --save 20 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    networks:
+      - ticket-assigner-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ticket-assigner-backend
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      DATABASE_HOST: ${DATABASE_HOST}
+      DATABASE_PORT: ${DATABASE_PORT}
+      DATABASE_NAME: ${DATABASE_NAME}
+      DATABASE_USER: ${DATABASE_USER}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      DATABASE_SSL: true
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: your-jwt-secret-here
+      AZURE_AD_CLIENT_ID: ${AZURE_AD_CLIENT_ID}
+      AZURE_AD_TENANT_ID: ${AZURE_AD_TENANT_ID}
+      AZURE_AD_CLIENT_SECRET: ${AZURE_AD_CLIENT_SECRET}
+      FRESHSERVICE_API_KEY: ${FRESHSERVICE_API_KEY}
+      FRESHSERVICE_DOMAIN: ${FRESHSERVICE_DOMAIN}
+      FRESHSERVICE_WEBHOOK_SECRET: ${FRESHSERVICE_WEBHOOK_SECRET}
+      VACATION_TRACKER_API_KEY: ${VACATION_TRACKER_API_KEY}
+    ports:
+      - "3001:3001"
+    depends_on:
+      - redis
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    command: npm run start:dev
+    networks:
+      - ticket-assigner-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ticket-assigner-frontend
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+      NEXT_PUBLIC_AZURE_AD_CLIENT_ID: ${AZURE_AD_CLIENT_ID}
+      NEXT_PUBLIC_AZURE_AD_TENANT_ID: ${AZURE_AD_TENANT_ID}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    command: npm run dev
+    networks:
+      - ticket-assigner-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  ticket-assigner-network:
+    driver: bridge

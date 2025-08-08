@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(ls:*)",
+      "Bash(mkdir:*)",
+      "Bash(npx @nestjs/cli new:*)",
+      "Bash(npx create-next-app:*)",
+      "Bash(openssl rand:*)",
+      "Bash(cp:*)",
+      "Bash(npm install:*)",
+      "Bash(node:*)",
+      "Bash(rm:*)",
+      "Bash(wget:*)",
+      "Bash(tar:*)",
+      "Bash(./ngrok version)",
+      "Bash(chmod:*)",
+      "Bash(unzip:*)",
+      "Bash(python3:*)",
+      "Bash(npm run sync:agents:*)",
+      "Bash(psql:*)",
+      "Bash(grep:*)",
+      "Bash(LOG_LEVEL=debug npm run sync:agents)",
+      "Bash(curl:*)",
+      "Bash(-H \"Content-Type: application/json\")",
+      "Bash(npm run sync:categories:*)",
+      "Bash(pkill:*)",
+      "Bash(npx tsc:*)"
+    ],
+    "deny": []
+  }
+}
