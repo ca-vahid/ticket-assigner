@@ -12,12 +12,14 @@ import {
   History,
   Brain,
   Filter,
+  Sparkles,
 } from 'lucide-react'
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Assignments', href: '/assignments', icon: Ticket },
   { name: 'Agents', href: '/agents', icon: Users },
+  { name: 'Skills', href: '/skills', icon: Sparkles },
   { name: 'Scoring', href: '/scoring', icon: Brain },
   { name: 'Eligibility', href: '/eligibility', icon: Filter },
   { name: 'Analytics', href: '/analytics', icon: BarChart3 },

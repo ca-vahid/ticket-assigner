@@ -8,7 +8,7 @@ import { SkillManager } from '@/components/agents/skill-manager';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { RefreshCw, Search, Users, Upload, TicketIcon } from 'lucide-react';
+import { RefreshCw, Search, Users, Upload, TicketIcon, Brain } from 'lucide-react';
 import { useAgents } from '@/hooks/useAgents';
 
 export default function AgentsPage() {
@@ -25,6 +25,24 @@ export default function AgentsPage() {
       await refreshAgents();
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleDetectSkills = async (agentId?: string) => {
+    try {
+      const url = agentId 
+        ? `http://localhost:3001/api/skills/detection/run?agentId=${agentId}`
+        : 'http://localhost:3001/api/skills/detection/run';
+      
+      const response = await fetch(url, { method: 'POST' });
+      const result = await response.json();
+      
+      if (result.success) {
+        console.log(`Skills detected: ${result.skillsDetected}`);
+        await refreshAgents();
+      }
+    } catch (error) {
+      console.error('Failed to detect skills:', error);
     }
   };
 
@@ -90,6 +108,14 @@ export default function AgentsPage() {
             >
               <TicketIcon className="h-4 w-4 mr-1" />
               {syncingTickets ? 'Updating...' : 'Update Tickets'}
+            </Button>
+            <Button
+              onClick={() => handleDetectSkills()}
+              variant="outline"
+              size="sm"
+            >
+              <Brain className="h-4 w-4 mr-1" />
+              Detect Skills
             </Button>
             <Button
               onClick={refreshAgents}

@@ -1,3 +1,4 @@
+// Temporary safe version of Agent entity that works without new columns
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, OneToMany, ManyToMany, JoinTable } from 'typeorm';
 import { Decision } from './decision.entity';
 import { Category } from './category.entity';
@@ -16,7 +17,7 @@ export enum AgentStatus {
 }
 
 @Entity('agents')
-export class Agent {
+export class AgentSafe {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
@@ -44,20 +45,11 @@ export class Agent {
   @Column('text', { array: true, nullable: true })
   skills: string[];
 
-  @Column('text', { array: true, nullable: true, name: 'category_skills', default: () => "'{}'" })
-  categorySkills?: string[]; // Auto-detected from ticket categories
-
-  @Column('text', { array: true, nullable: true, name: 'auto_detected_skills', default: () => "'{}'" })
-  autoDetectedSkills?: string[]; // All auto-detected skills (from various sources)
-
-  @Column({ type: 'jsonb', nullable: true, name: 'skill_metadata', default: {} })
-  skillMetadata?: {
-    manual?: string[];
-    category?: { skill: string; confidence: number; ticketCount: number }[];
-    group?: string[];
-    pattern?: { skill: string; confidence: number }[];
-    llm?: { skill: string; confidence: number; reasoning?: string }[];
-  };
+  // These are the new columns - they may not exist in DB yet
+  categorySkills?: string[];
+  autoDetectedSkills?: string[];
+  skillMetadata?: any;
+  lastSkillDetectionAt?: Date;
 
   @Column({ nullable: true })
   location: string;
@@ -85,8 +77,6 @@ export class Agent {
   @Column({ name: 'total_assignments', default: 0 })
   totalAssignments: number;
 
-
-
   @Column({ name: 'expertise_areas', type: 'jsonb', nullable: true })
   expertiseAreas: any;
 
@@ -95,9 +85,6 @@ export class Agent {
 
   @Column({ name: 'last_sync_at', nullable: true })
   lastSyncAt: Date;
-
-  @Column({ name: 'last_skill_detection_at', nullable: true })
-  lastSkillDetectionAt?: Date;
 
   @Column({ name: 'satisfaction_score', type: 'float', nullable: true })
   satisfactionScore: number;

@@ -1,0 +1,73 @@
+# PowerShell script to apply database migration
+# Run this from PowerShell with: .\apply-migration.ps1
+
+Write-Host "Applying skill detection migration..." -ForegroundColor Yellow
+
+$connectionString = "Host=localhost;Database=ticket_assigner;Username=user;Password=password"
+
+$sql = @"
+-- Add skill detection columns to agents table
+ALTER TABLE agents 
+ADD COLUMN IF NOT EXISTS category_skills text[],
+ADD COLUMN IF NOT EXISTS auto_detected_skills text[],
+ADD COLUMN IF NOT EXISTS skill_metadata jsonb,
+ADD COLUMN IF NOT EXISTS last_skill_detection_at timestamp;
+
+-- Create skill_detection_config table
+CREATE TABLE IF NOT EXISTS skill_detection_config (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  method varchar NOT NULL,
+  enabled boolean DEFAULT true,
+  settings jsonb,
+  last_run_at timestamp,
+  last_run_status varchar,
+  last_run_stats jsonb,
+  created_at timestamp DEFAULT CURRENT_TIMESTAMP,
+  updated_at timestamp DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create detected_skills table
+CREATE TABLE IF NOT EXISTS detected_skills (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id uuid NOT NULL REFERENCES agents(id),
+  skill_name varchar NOT NULL,
+  skill_type varchar NOT NULL,
+  detection_method varchar NOT NULL,
+  confidence float,
+  metadata jsonb,
+  status varchar DEFAULT 'PENDING',
+  reviewed_by varchar,
+  reviewed_at timestamp,
+  review_notes text,
+  detected_at timestamp DEFAULT CURRENT_TIMESTAMP,
+  is_active boolean DEFAULT false
+);
+
+-- Create skill_audit_logs table
+CREATE TABLE IF NOT EXISTS skill_audit_logs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id uuid REFERENCES agents(id),
+  action varchar NOT NULL,
+  skill_name varchar,
+  previous_value jsonb,
+  new_value jsonb,
+  metadata jsonb,
+  performed_by varchar,
+  created_at timestamp DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create indexes for performance
+CREATE INDEX IF NOT EXISTS idx_detected_skills_agent_id ON detected_skills(agent_id);
+CREATE INDEX IF NOT EXISTS idx_detected_skills_status ON detected_skills(status);
+CREATE INDEX IF NOT EXISTS idx_skill_audit_logs_agent_id ON skill_audit_logs(agent_id);
+CREATE INDEX IF NOT EXISTS idx_skill_audit_logs_created_at ON skill_audit_logs(created_at);
+"@
+
+Write-Host "Migration SQL prepared" -ForegroundColor Green
+Write-Host "Please run the following SQL in your database:" -ForegroundColor Cyan
+Write-Host $sql
+
+Write-Host "`nAlternatively, you can:" -ForegroundColor Yellow
+Write-Host "1. Install pgAdmin or another PostgreSQL client" -ForegroundColor White
+Write-Host "2. Connect to your database" -ForegroundColor White
+Write-Host "3. Run the SQL commands above" -ForegroundColor White

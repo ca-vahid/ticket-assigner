@@ -4,6 +4,9 @@ import { Agent } from '../database/entities/agent.entity';
 import { Category } from '../database/entities/category.entity';
 import { Decision } from '../database/entities/decision.entity';
 import { Settings } from '../database/entities/settings.entity';
+import { DetectedSkill } from '../database/entities/detected-skill.entity';
+import { SkillDetectionConfig } from '../database/entities/skill-detection-config.entity';
+import { SkillAuditLog } from '../database/entities/skill-audit-log.entity';
 
 export const getDatabaseConfig = (configService: ConfigService): DataSourceOptions => ({
   type: 'postgres',
@@ -12,7 +15,7 @@ export const getDatabaseConfig = (configService: ConfigService): DataSourceOptio
   username: configService.get('DATABASE_USER', 'postgres'),
   password: configService.get('DATABASE_PASSWORD', 'postgres'),
   database: configService.get('DATABASE_NAME', 'ticket_assigner'),
-  entities: [Agent, Category, Decision, Settings],
+  entities: [Agent, Category, Decision, Settings, DetectedSkill, SkillDetectionConfig, SkillAuditLog],
   migrations: ['dist/database/migrations/*.js'],
   synchronize: false, // Disable auto-sync, we'll use migrations
   logging: configService.get('NODE_ENV') === 'development',
