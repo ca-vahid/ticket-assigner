@@ -59,9 +59,13 @@ export class SkillDetectionService {
       }
 
       // Get agents to process
-      const agents = agentId 
-        ? await this.agentRepository.find({ where: { id: agentId } })
-        : await this.agentRepository.find({ where: { isAvailable: true } });
+      let agents: Agent[];
+      if (agentId) {
+        const agent = await this.agentRepository.findOne({ where: { id: agentId } });
+        agents = agent ? [agent] : [];
+      } else {
+        agents = await this.agentRepository.find({ where: { isAvailable: true } });
+      }
 
       this.logger.log(`Processing ${agents.length} agents with ${configs.length} detection methods`);
 
@@ -96,8 +100,10 @@ export class SkillDetectionService {
           // Save detected skills
           for (const result of results) {
             for (const skill of result.detectedSkills) {
-              await this.saveDetectedSkill(agent, skill);
-              skillsDetected++;
+              const wasCreatedOrUpdated = await this.saveDetectedSkill(agent, skill);
+              if (wasCreatedOrUpdated) {
+                skillsDetected++;
+              }
             }
           }
 
@@ -163,21 +169,41 @@ export class SkillDetectionService {
     try {
       const settings = config.settings || {};
       const minimumTickets = settings.minimumTickets || 5;
-      const lookbackTickets = settings.lookbackTickets || 1000;
+      const lookbackTickets = settings.lookbackTickets || 500;
       const includeComplexity = settings.includeComplexity !== false;
 
       this.logger.debug(`Detecting category skills for ${agent.email}`);
+      this.logger.log(`Fetching tickets for agent ${agent.email} (FreshserviceID: ${agent.freshserviceId})`);
 
       // Fetch agent's ticket history from Freshservice
       const tickets = await this.fetchAgentTicketHistory(agent.freshserviceId, lookbackTickets);
+      
+      this.logger.log(`Found ${tickets.length} tickets for ${agent.email}`);
+      
+      // Log first few tickets to see their structure and custom fields
+      if (tickets.length > 0) {
+        this.logger.log(`Sample ticket structure:`, JSON.stringify(tickets[0], null, 2).substring(0, 500));
+        if (tickets[0].custom_fields) {
+          this.logger.log(`Available custom fields:`, Object.keys(tickets[0].custom_fields));
+          this.logger.log(`Security field value:`, tickets[0].custom_fields.security || 'NOT FOUND');
+        }
+      }
       
       // Group tickets by category and count
       const categoryMap = new Map<string, { count: number; complexity: number }>();
       
       for (const ticket of tickets) {
-        // Assuming ticket has a custom field for category
-        const category = ticket.custom_fields?.category || ticket.category;
-        if (!category) continue;
+        // Use the custom 'security' dropdown field as the primary category source
+        const category = ticket.custom_fields?.security || 
+                        ticket.custom_fields?.cf_security ||
+                        null; // Only use the security field, ignore generic categories
+        
+        if (!category) {
+          this.logger.debug(`No security category found for ticket ${ticket.id}`);
+          continue;
+        }
+        
+        this.logger.debug(`Ticket ${ticket.id} has security category: ${category}`);
 
         const current = categoryMap.get(category) || { count: 0, complexity: 0 };
         current.count++;
@@ -193,12 +219,19 @@ export class SkillDetectionService {
 
       // Filter categories that meet the threshold
       const detectedSkills = [];
+      
+      this.logger.log(`Category analysis for ${agent.email}:`);
       for (const [category, stats] of categoryMap.entries()) {
+        this.logger.log(`  - ${category}: ${stats.count} tickets`);
+        
         if (stats.count >= minimumTickets) {
           const confidence = Math.min(stats.count / (minimumTickets * 2), 1); // Max confidence at 2x minimum
+          const skillName = this.categoryToSkillName(category);
+          
+          this.logger.log(`    ✅ Meets threshold! Creating skill: ${skillName} (${(confidence * 100).toFixed(0)}% confidence)`);
           
           detectedSkills.push({
-            skillName: this.categoryToSkillName(category),
+            skillName,
             type: SkillType.CATEGORY,
             method: SkillDetectionMethod.CATEGORY_BASED,
             confidence,
@@ -212,12 +245,16 @@ export class SkillDetectionService {
               }
             }
           });
+        } else {
+          this.logger.log(`    ❌ Below threshold (needs ${minimumTickets}, has ${stats.count})`);
         }
       }
 
       if (detectedSkills.length > 0) {
-        this.logger.log(`Found ${detectedSkills.length} category-based skills for ${agent.email}`);
+        this.logger.log(`🎯 Found ${detectedSkills.length} category-based skills for ${agent.email}`);
         return { agentId: agent.id, detectedSkills };
+      } else {
+        this.logger.log(`No skills met the threshold for ${agent.email}`);
       }
 
       return null;
@@ -283,15 +320,17 @@ export class SkillDetectionService {
   /**
    * Fetch agent's ticket history
    */
-  private async fetchAgentTicketHistory(freshserviceId: string, limit: number = 1000): Promise<any[]> {
+  private async fetchAgentTicketHistory(freshserviceId: string, limit: number = 500): Promise<any[]> {
     try {
-      // This would need to be implemented in FreshserviceService
-      // For now, returning mock data structure
-      return await this.freshserviceService.getAgentTickets(freshserviceId, {
-        status: [4, 5], // Resolved and Closed
-        limit,
-        include: 'custom_fields,tags'
+      this.logger.log(`Fetching tickets from Freshservice for agent ID: ${freshserviceId}`);
+      
+      const tickets = await this.freshserviceService.getAgentTickets(freshserviceId, {
+        status: [4, 5], // Resolved and Closed  
+        limit
       });
+      
+      this.logger.log(`Freshservice returned ${tickets.length} tickets for agent ${freshserviceId}`);
+      return tickets;
     } catch (error) {
       this.logger.error(`Failed to fetch ticket history for agent ${freshserviceId}:`, error);
       return [];
@@ -301,8 +340,8 @@ export class SkillDetectionService {
   /**
    * Save detected skill to database
    */
-  private async saveDetectedSkill(agent: Agent, skill: any): Promise<void> {
-    // Check if skill already exists
+  private async saveDetectedSkill(agent: Agent, skill: any): Promise<boolean> {
+    // Check if skill already exists as pending
     const existing = await this.detectedSkillRepository.findOne({
       where: {
         agentId: agent.id,
@@ -311,32 +350,64 @@ export class SkillDetectionService {
       }
     });
 
-    if (!existing) {
-      const detectedSkill = this.detectedSkillRepository.create({
-        agent,
-        agentId: agent.id,
-        skillName: skill.skillName,
-        skillType: skill.type,
-        detectionMethod: skill.method,
-        confidence: skill.confidence,
-        metadata: skill.metadata,
-        status: DetectedSkillStatus.PENDING
+    if (existing) {
+      // Update existing pending skill with new metadata and confidence
+      existing.confidence = skill.confidence;
+      existing.metadata = skill.metadata;
+      // Don't update detectedAt as it's a CreateDateColumn
+      
+      await this.detectedSkillRepository.save(existing);
+      
+      this.logger.log(`Updated existing pending skill ${skill.skillName} for ${agent.email} (confidence: ${(skill.confidence * 100).toFixed(0)}%)`);
+      
+      // Return true - skill was updated
+      return true;
+    } else {
+      // Check if skill was previously approved/rejected
+      const previouslyReviewed = await this.detectedSkillRepository.findOne({
+        where: {
+          agentId: agent.id,
+          skillName: skill.skillName
+        }
       });
-
-      await this.detectedSkillRepository.save(detectedSkill);
-
-      // Log audit entry
-      await this.auditLogRepository.save({
-        agentId: agent.id,
-        action: SkillAuditAction.SKILL_DETECTED,
-        skillName: skill.skillName,
-        metadata: {
+      
+      // Only create new if not previously approved (rejected skills can be re-detected)
+      if (!previouslyReviewed || previouslyReviewed.status === DetectedSkillStatus.REJECTED) {
+        const detectedSkill = this.detectedSkillRepository.create({
+          agent,
+          agentId: agent.id,
+          skillName: skill.skillName,
+          skillType: skill.type,
           detectionMethod: skill.method,
           confidence: skill.confidence,
-          ...skill.metadata
-        },
-        performedBy: 'SYSTEM'
-      });
+          metadata: skill.metadata,
+          status: DetectedSkillStatus.PENDING
+        });
+
+        await this.detectedSkillRepository.save(detectedSkill);
+        
+        this.logger.log(`Created new pending skill ${skill.skillName} for ${agent.email}`);
+
+        // Log audit entry
+        await this.auditLogRepository.save({
+          agentId: agent.id,
+          action: SkillAuditAction.SKILL_DETECTED,
+          skillName: skill.skillName,
+          metadata: {
+            detectionMethod: skill.method,
+            confidence: skill.confidence,
+            ...skill.metadata
+          },
+          performedBy: 'SYSTEM'
+        });
+        
+        // Return true - new skill was created
+        return true;
+      } else {
+        this.logger.log(`Skill ${skill.skillName} already approved for ${agent.email}, skipping`);
+        // Return false - skill was not created/updated
+        return false;
+      }
     }
   }
 

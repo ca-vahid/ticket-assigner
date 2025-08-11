@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { MainLayout } from '@/components/layout/main-layout'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { PendingAssignments } from './pending-assignments'
+import { PendingAssignmentsV2 } from './pending-assignments-v2'
 import { AutoAssignmentQueue } from './auto-assignment-queue'
 import { AssignmentHistory } from './assignment-history'
 
@@ -29,7 +29,7 @@ export function AssignmentsView() {
           </TabsList>
 
           <TabsContent value="pending" className="space-y-4">
-            <PendingAssignments />
+            <PendingAssignmentsV2 />
           </TabsContent>
 
           <TabsContent value="queue" className="space-y-4">

@@ -8,15 +8,32 @@ import { SkillManager } from '@/components/agents/skill-manager';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { RefreshCw, Search, Users, Upload, TicketIcon, Brain } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { RefreshCw, Search, Users, Upload, TicketIcon, Brain, UserX, UserCheck } from 'lucide-react';
 import { useAgents } from '@/hooks/useAgents';
 
 export default function AgentsPage() {
   const { agents, loading, error, refreshAgents, syncAgents, updateAgent } = useAgents();
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [activeTab, setActiveTab] = useState('active');
   const [syncing, setSyncing] = useState(false);
   const [syncingTickets, setSyncingTickets] = useState(false);
+  const [detectingSkills, setDetectingSkills] = useState<string | null>(null);
+  const [detectionResult, setDetectionResult] = useState<any>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    open: boolean;
+    title: string;
+    description: string;
+    variant?: 'default' | 'destructive';
+    onConfirm: () => void;
+  }>({
+    open: false,
+    title: '',
+    description: '',
+    onConfirm: () => {},
+  });
 
   const handleSync = async () => {
     setSyncing(true);
@@ -28,21 +45,64 @@ export default function AgentsPage() {
     }
   };
 
-  const handleDetectSkills = async (agentId?: string) => {
+  const handleDetectSkills = async (agentId: string, agentName: string) => {
+    console.log('Detecting skills for:', { agentId, agentName });
+    
+    if (!agentId) {
+      setDetectionResult({
+        agentId: 'unknown',
+        agentName: agentName || 'Unknown',
+        error: true,
+        message: 'Agent ID is missing'
+      });
+      return;
+    }
+    
+    setDetectingSkills(agentId);
+    setDetectionResult(null);
+    
     try {
-      const url = agentId 
-        ? `http://localhost:3001/api/skills/detection/run?agentId=${agentId}`
-        : 'http://localhost:3001/api/skills/detection/run';
+      const response = await fetch('/api/skills/detect', { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId })
+      });
       
-      const response = await fetch(url, { method: 'POST' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
       const result = await response.json();
       
       if (result.success) {
-        console.log(`Skills detected: ${result.skillsDetected}`);
-        await refreshAgents();
+        setDetectionResult({
+          agentId,
+          agentName,
+          skillsDetected: result.skillsDetected || 0,
+          message: result.skillsDetected > 0 
+            ? `Successfully detected ${result.skillsDetected} skill(s) for ${agentName}. Go to Skills page to review and approve them.`
+            : `No new skills detected for ${agentName}. This agent may not have enough resolved tickets (5+ required per category).`
+        });
+      } else {
+        setDetectionResult({
+          agentId,
+          agentName,
+          error: true,
+          message: `Failed to detect skills for ${agentName}: ${result.errors?.join(', ') || 'Unknown error'}`
+        });
       }
+      
+      await refreshAgents();
     } catch (error) {
       console.error('Failed to detect skills:', error);
+      setDetectionResult({
+        agentId,
+        agentName,
+        error: true,
+        message: `Failed to detect skills for ${agentName}: Network error`
+      });
+    } finally {
+      setDetectingSkills(null);
     }
   };
 
@@ -65,9 +125,59 @@ export default function AgentsPage() {
     }
   };
 
-  const handleAgentUpdate = async (agentId: string, updates: any) => {
-    await updateAgent(agentId, updates);
-    await refreshAgents();
+  const handleAgentUpdate = async (agentId: string, updates: any, skipConfirm = false) => {
+    const performUpdate = async () => {
+      await updateAgent(agentId, updates);
+      const updatedAgents = await refreshAgents();
+      const updatedAgent = updatedAgents?.find(a => a.id === agentId);
+      if (updatedAgent) {
+        setSelectedAgent(updatedAgent);
+      }
+      
+      // If deactivating, switch to inactive tab to show the agent there
+      if ('isAvailable' in updates && !updates.isAvailable) {
+        setActiveTab('inactive');
+      }
+      // If activating, switch to active tab
+      else if ('isAvailable' in updates && updates.isAvailable) {
+        setActiveTab('active');
+      }
+    };
+
+    // Add confirmation for status changes
+    if (!skipConfirm && 'isAvailable' in updates) {
+      const isActivating = updates.isAvailable;
+      setConfirmDialog({
+        open: true,
+        title: isActivating ? 'Activate Agent' : 'Deactivate Agent',
+        description: isActivating 
+          ? `Are you sure you want to activate ${selectedAgent?.firstName} ${selectedAgent?.lastName}?\n\nThis agent will be eligible for ticket assignments.`
+          : `Are you sure you want to deactivate ${selectedAgent?.firstName} ${selectedAgent?.lastName}?\n\nThis agent will NOT receive any new ticket assignments and will be moved to the Inactive tab.`,
+        variant: isActivating ? 'default' : 'destructive',
+        onConfirm: async () => {
+          setConfirmDialog({ ...confirmDialog, open: false });
+          await performUpdate();
+        }
+      });
+      return;
+    }
+    
+    // Add confirmation for level changes
+    if (!skipConfirm && 'level' in updates && updates.level !== selectedAgent?.level) {
+      setConfirmDialog({
+        open: true,
+        title: 'Change Agent Level',
+        description: `Are you sure you want to change ${selectedAgent?.firstName} ${selectedAgent?.lastName}'s level from ${selectedAgent?.level} to ${updates.level}?\n\nThis may affect their ticket assignment priorities.`,
+        variant: 'default',
+        onConfirm: async () => {
+          setConfirmDialog({ ...confirmDialog, open: false });
+          await performUpdate();
+        }
+      });
+      return;
+    }
+    
+    await performUpdate();
   };
 
   const filteredAgents = agents?.filter(agent => 
@@ -76,6 +186,10 @@ export default function AgentsPage() {
     agent.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     agent.skills?.some(skill => skill.toLowerCase().includes(searchTerm.toLowerCase()))
   );
+  
+  // Separate active and inactive agents
+  const activeAgents = filteredAgents?.filter(agent => agent.isAvailable !== false);
+  const inactiveAgents = filteredAgents?.filter(agent => agent.isAvailable === false);
 
   return (
     <MainLayout>
@@ -85,7 +199,7 @@ export default function AgentsPage() {
           <div>
             <h2 className="text-2xl font-bold">Agent Management</h2>
             <p className="text-sm text-muted-foreground">
-              {agents?.length || 0} total agents • {agents?.filter(a => a.isAvailable).length || 0} available
+              {agents?.length || 0} total • {activeAgents?.length || 0} active • {inactiveAgents?.length || 0} inactive
             </p>
           </div>
           
@@ -110,12 +224,40 @@ export default function AgentsPage() {
               {syncingTickets ? 'Updating...' : 'Update Tickets'}
             </Button>
             <Button
-              onClick={() => handleDetectSkills()}
+              onClick={async () => {
+                if (confirm('This will detect skills for ALL agents. This may take a while. Continue?')) {
+                  setDetectingSkills('all');
+                  setDetectionResult(null);
+                  try {
+                    const response = await fetch('/api/skills/detect', { 
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ runAll: true })
+                    });
+                    const result = await response.json();
+                    
+                    setDetectionResult({
+                      agentName: 'All Agents',
+                      skillsDetected: result.skillsDetected || 0,
+                      message: `Processed ${result.agentsProcessed || 0} agents, detected ${result.skillsDetected || 0} new skills`
+                    });
+                  } catch (error) {
+                    setDetectionResult({
+                      agentName: 'All Agents',
+                      error: true,
+                      message: 'Failed to detect skills for all agents'
+                    });
+                  } finally {
+                    setDetectingSkills(null);
+                  }
+                }
+              }}
+              disabled={detectingSkills === 'all'}
               variant="outline"
               size="sm"
             >
               <Brain className="h-4 w-4 mr-1" />
-              Detect Skills
+              {detectingSkills === 'all' ? 'Detecting...' : 'Detect All Skills'}
             </Button>
             <Button
               onClick={refreshAgents}
@@ -140,39 +282,86 @@ export default function AgentsPage() {
           />
         </div>
 
+        {/* Detection Result Alert */}
+        {detectionResult && (
+          <div className={`p-3 rounded-lg border ${detectionResult.error ? 'bg-red-50 border-red-300' : 'bg-green-50 border-green-300'}`}>
+            <div className="flex items-start gap-2">
+              <div className={`mt-0.5 ${detectionResult.error ? 'text-red-600' : 'text-green-600'}`}>
+                {detectionResult.error ? '✗' : '✓'}
+              </div>
+              <div className="flex-1">
+                <div className={`font-medium ${detectionResult.error ? 'text-red-900' : 'text-green-900'}`}>
+                  {detectionResult.agentName}
+                </div>
+                <div className={`text-sm ${detectionResult.error ? 'text-red-700' : 'text-green-700'}`}>
+                  {detectionResult.message}
+                </div>
+              </div>
+              <button
+                onClick={() => setDetectionResult(null)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Main Content Grid */}
         <div className="grid grid-cols-12 gap-4">
-          {/* Left Panel - Agent List with its own scroll */}
-          <div className="col-span-12 lg:col-span-4">
+          {/* Left Panel - Agent List with tabs - Made narrower */}
+          <div className="col-span-12 lg:col-span-3">
             <Card className="p-3">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="font-semibold text-sm">Agents ({filteredAgents?.length || 0})</h3>
-                <span className="text-xs text-gray-500">
-                  Click to select
-                </span>
-              </div>
-              
-              {/* Independent Scrollable Container for Agent List */}
-              <div style={{ 
-                maxHeight: '70vh', 
-                overflowY: 'auto',
-                overflowX: 'hidden'
-              }}>
-                <AgentList
-                  agents={filteredAgents}
-                  selectedAgent={selectedAgent}
-                  onSelectAgent={setSelectedAgent}
-                  loading={loading}
-                />
-              </div>
+              <Tabs value={activeTab} onValueChange={setActiveTab}>
+                <TabsList className="grid w-full grid-cols-2 mb-2">
+                  <TabsTrigger value="active" className="text-xs">
+                    <UserCheck className="h-3 w-3 mr-1" />
+                    Active ({activeAgents?.length || 0})
+                  </TabsTrigger>
+                  <TabsTrigger value="inactive" className="text-xs">
+                    <UserX className="h-3 w-3 mr-1" />
+                    Inactive ({inactiveAgents?.length || 0})
+                  </TabsTrigger>
+                </TabsList>
+                
+                <TabsContent value="active" className="mt-2">
+                  <div style={{ 
+                    maxHeight: '65vh', 
+                    overflowY: 'auto',
+                    overflowX: 'hidden'
+                  }}>
+                    <AgentList
+                      agents={activeAgents}
+                      selectedAgent={selectedAgent}
+                      onSelectAgent={setSelectedAgent}
+                      loading={loading}
+                    />
+                  </div>
+                </TabsContent>
+                
+                <TabsContent value="inactive" className="mt-2">
+                  <div style={{ 
+                    maxHeight: '65vh', 
+                    overflowY: 'auto',
+                    overflowX: 'hidden'
+                  }}>
+                    <AgentList
+                      agents={inactiveAgents}
+                      selectedAgent={selectedAgent}
+                      onSelectAgent={setSelectedAgent}
+                      loading={loading}
+                    />
+                  </div>
+                </TabsContent>
+              </Tabs>
             </Card>
           </div>
 
-          {/* Right Panel - Agent Details & Skills */}
-          <div className="col-span-12 lg:col-span-8">
+          {/* Right Panel - Agent Details & Skills - Made wider */}
+          <div className="col-span-12 lg:col-span-9">
             {selectedAgent ? (
               <div className="space-y-4">
-                {/* Compact Agent Header */}
+                {/* Compact Agent Header with Controls */}
                 <Card className="p-4">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-3">
@@ -186,20 +375,58 @@ export default function AgentsPage() {
                         <p className="text-sm text-gray-600">{selectedAgent.email}</p>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${
-                        selectedAgent.isAvailable ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                      }`}>
-                        {selectedAgent.isAvailable ? 'Available' : 'Unavailable'}
-                      </span>
-                      <p className="text-xs text-gray-500 mt-1">Level {selectedAgent.level}</p>
+                    <div className="flex gap-3 items-start">
+                      {/* Level Selector */}
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs text-gray-500">Level</label>
+                        <select
+                          value={selectedAgent.level}
+                          onChange={(e) => handleAgentUpdate(selectedAgent.id, { level: e.target.value })}
+                          className="px-2 py-1 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          <option value="L1">L1</option>
+                          <option value="L2">L2</option>
+                          <option value="L3">L3</option>
+                        </select>
+                      </div>
+                      
+                      {/* Availability Toggle */}
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs text-gray-500">Status</label>
+                        <Button
+                          size="sm"
+                          variant={selectedAgent.isAvailable ? "default" : "destructive"}
+                          onClick={() => handleAgentUpdate(selectedAgent.id, { isAvailable: !selectedAgent.isAvailable })}
+                          className="h-8"
+                        >
+                          {selectedAgent.isAvailable ? (
+                            <>
+                              <UserCheck className="h-3 w-3 mr-1" />
+                              Active
+                            </>
+                          ) : (
+                            <>
+                              <UserX className="h-3 w-3 mr-1" />
+                              Inactive
+                            </>
+                          )}
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 </Card>
 
-                {/* Two Column Layout for Workload and Skills */}
+                {/* Two Column Layout for Skills and Workload - SWITCHED ORDER */}
                 <div className="grid grid-cols-2 gap-4">
-                  {/* Workload Analysis - Left */}
+                  {/* Skills Management - Now on Left */}
+                  <SkillManager
+                    key={selectedAgent.id}
+                    agent={selectedAgent}
+                    onSkillsUpdate={(skills) => handleAgentUpdate(selectedAgent.id, { skills })}
+                    onDetectSkills={handleDetectSkills}
+                  />
+                  
+                  {/* Workload Analysis - Now on Right */}
                   <Card className="p-4">
                     <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
                       <TicketIcon className="h-4 w-4" />
@@ -260,13 +487,6 @@ export default function AgentsPage() {
                       </div>
                     )}
                   </Card>
-
-                  {/* Skills Management - Right */}
-                  <SkillManager
-                    key={selectedAgent.id}
-                    agent={selectedAgent}
-                    onSkillsUpdate={(skills) => handleAgentUpdate(selectedAgent.id, { skills })}
-                  />
                 </div>
 
                 {/* Additional Details Below */}
@@ -302,6 +522,17 @@ export default function AgentsPage() {
           </div>
         </div>
       </div>
+      
+      {/* Confirmation Dialog */}
+      <ConfirmDialog
+        open={confirmDialog.open}
+        onOpenChange={(open) => setConfirmDialog({ ...confirmDialog, open })}
+        title={confirmDialog.title}
+        description={confirmDialog.description}
+        variant={confirmDialog.variant}
+        onConfirm={confirmDialog.onConfirm}
+        confirmText={confirmDialog.variant === 'destructive' ? 'Deactivate' : 'Confirm'}
+      />
     </MainLayout>
   );
 }

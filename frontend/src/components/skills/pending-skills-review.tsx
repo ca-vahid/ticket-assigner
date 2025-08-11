@@ -51,9 +51,11 @@ export function PendingSkillsReview({ pendingSkills, onUpdate }: PendingSkillsRe
       setSelectAll(false);
     } else {
       const allSkillIds = new Set<string>();
-      Object.values(pendingSkills.byAgent).forEach(agent => {
-        agent.skills.forEach(skill => allSkillIds.add(skill.id));
-      });
+      if (pendingSkills.byAgent) {
+        Object.values(pendingSkills.byAgent).forEach(agent => {
+          agent.skills.forEach(skill => allSkillIds.add(skill.id));
+        });
+      }
       setSelectedSkills(allSkillIds);
       setSelectAll(true);
     }
@@ -64,7 +66,7 @@ export function PendingSkillsReview({ pendingSkills, onUpdate }: PendingSkillsRe
     
     setProcessing(true);
     try {
-      const response = await fetch('http://localhost:3001/api/skills/detection/approve', {
+      const response = await fetch('/api/skills/detected/approve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -90,7 +92,7 @@ export function PendingSkillsReview({ pendingSkills, onUpdate }: PendingSkillsRe
     
     setProcessing(true);
     try {
-      const response = await fetch('http://localhost:3001/api/skills/detection/reject', {
+      const response = await fetch('/api/skills/detected/reject', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -209,7 +211,7 @@ export function PendingSkillsReview({ pendingSkills, onUpdate }: PendingSkillsRe
 
       {/* Method Summary */}
       <div className="grid grid-cols-4 gap-2">
-        {Object.entries(pendingSkills.byMethod).map(([method, count]) => (
+        {pendingSkills.byMethod && Object.entries(pendingSkills.byMethod).map(([method, count]) => (
           <Card key={method}>
             <CardContent className="pt-4 pb-4">
               <div className="flex items-center justify-between">
@@ -224,7 +226,7 @@ export function PendingSkillsReview({ pendingSkills, onUpdate }: PendingSkillsRe
       </div>
 
       {/* Skills by Agent */}
-      {Object.entries(pendingSkills.byAgent).map(([agentId, agentData]) => (
+      {pendingSkills.byAgent && Object.entries(pendingSkills.byAgent).map(([agentId, agentData]) => (
         <Card key={agentId}>
           <CardHeader>
             <CardTitle className="flex items-center justify-between">
@@ -283,7 +285,7 @@ export function PendingSkillsReview({ pendingSkills, onUpdate }: PendingSkillsRe
                           <div>Group: {skill.metadata.groupName}</div>
                         )}
                         {skill.metadata?.categories && (
-                          <div>Categories: {skill.metadata.categories.join(', ')}</div>
+                          <div>Security Category: {skill.metadata.categories.join(', ')}</div>
                         )}
                       </div>
                       

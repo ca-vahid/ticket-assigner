@@ -2,7 +2,8 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
 import { SkillDetectionService } from './skill-detection.service';
-import { SkillDetectionController } from './skill-detection.controller';
+import { CategoryService } from './category.service';
+import { SkillsController } from './skills.controller';
 import { SkillDetectionScheduler } from './skill-detection.scheduler';
 import { Agent } from '../database/entities/agent.entity';
 import { DetectedSkill } from '../database/entities/detected-skill.entity';
@@ -22,10 +23,11 @@ import { FreshserviceModule } from '../integrations/freshservice/freshservice.mo
   ],
   providers: [
     SkillDetectionService,
+    CategoryService,
     SkillDetectionScheduler
   ],
   controllers: [
-    SkillDetectionController
+    SkillsController
   ],
   exports: [
     SkillDetectionService

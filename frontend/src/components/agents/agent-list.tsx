@@ -149,13 +149,13 @@ export function AgentList({ agents, selectedAgent, onSelectAgent, loading }: Age
             )}
           </div>
 
-          {/* Top 3 Skills - Very Compact */}
+          {/* Top 3 Skills - Very Compact (Including auto-detected) */}
           {agent.skills && agent.skills.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1">
               {agent.skills.slice(0, 3).map((skill, index) => (
                 <Badge
                   key={index}
-                  variant="secondary"
+                  variant={agent.autoDetectedSkills?.includes(skill) ? "default" : "secondary"}
                   className="text-xs py-0 px-1"
                 >
                   {skill.replace(/_/g, ' ')}

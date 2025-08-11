@@ -47,9 +47,9 @@ export class SkillAuditLog {
     errors?: string[];
   };
 
-  @Column({ nullable: true })
+  @Column({ name: 'performed_by', nullable: true })
   performedBy: string; // User or 'SYSTEM'
 
-  @CreateDateColumn()
+  @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 }

@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { Agent } from './agent.entity';
 import { SkillDetectionMethod } from './skill-detection-config.entity';
 
@@ -75,6 +75,9 @@ export class DetectedSkill {
 
   @CreateDateColumn({ name: 'detected_at' })
   detectedAt: Date;
+  
+  @UpdateDateColumn({ name: 'updated_at' })
+  updatedAt: Date;
 
   @Column({ name: 'is_active', default: false })
   isActive: boolean; // Whether skill is currently active on agent

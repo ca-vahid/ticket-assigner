@@ -15,6 +15,11 @@ interface Agent {
   isAvailable: boolean;
   level: string;
   skills: string[];
+  autoDetectedSkills?: string[];
+  skillMetadata?: {
+    manual?: string[];
+    category?: { skill: string; confidence: number; ticketCount: number }[];
+  };
   currentTicketCount: number;
   weightedTicketCount?: number;
   ticketWorkloadBreakdown?: {

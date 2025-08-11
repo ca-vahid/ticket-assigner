@@ -89,7 +89,7 @@ export function SkillDetectionConfig({ configs, onUpdate }: SkillDetectionConfig
     
     try {
       const response = await fetch(
-        `http://localhost:3001/api/skills/detection/config/${method}`,
+        `http://localhost:3000/api/skills/config/${config.id}`,
         {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
