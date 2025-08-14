@@ -56,9 +56,17 @@ export class TicketWorkloadCalculator {
   }
 
   /**
+   * Get current ticket age weights
+   */
+  async getTicketAgeWeights(): Promise<{ fresh: number; recent: number; stale: number; old: number }> {
+    await this.loadTicketAgeWeights();
+    return this.ticketAgeWeights!;
+  }
+
+  /**
    * Load ticket age weights from settings
    */
-  private async loadTicketAgeWeights(): Promise<void> {
+  async loadTicketAgeWeights(): Promise<void> {
     const setting = await this.settingsRepository.findOne({
       where: { key: 'scoring.ticketAgeWeights' }
     });
@@ -81,10 +89,9 @@ export class TicketWorkloadCalculator {
    * Uses configurable weights from settings
    */
   async calculateTicketWeight(ticketCreatedDate: Date, now: Date = new Date()): Promise<TicketWorkload> {
-    // Ensure weights are loaded
-    if (!this.ticketAgeWeights) {
-      await this.loadTicketAgeWeights();
-    }
+    // Always reload weights to ensure we have the latest values
+    // This is important when weights are updated in the database
+    await this.loadTicketAgeWeights();
     const ageInDays = Math.floor((now.getTime() - ticketCreatedDate.getTime()) / (1000 * 60 * 60 * 24));
     const ageInBusinessDays = this.calculateBusinessDays(ticketCreatedDate, now);
     
@@ -92,21 +99,22 @@ export class TicketWorkloadCalculator {
     let category: 'fresh' | 'recent' | 'stale' | 'abandoned';
     const weights = this.ticketAgeWeights!;
     
-    // Use configurable weights based on age
-    if (ageInBusinessDays <= 1) {
-      // 0-1 business days - fresh
+    // Use configurable weights based on age in REGULAR days (not business days)
+    // This matches what's displayed in the UI
+    if (ageInDays <= 1) {
+      // 0-1 days - fresh
       weight = weights.fresh;
       category = 'fresh';
-    } else if (ageInBusinessDays <= 5) {
-      // 2-5 business days - recent
+    } else if (ageInDays <= 5) {
+      // 2-5 days - recent
       weight = weights.recent;
       category = 'recent';
-    } else if (ageInBusinessDays <= 14) {
-      // 6-14 business days - stale
+    } else if (ageInDays <= 14) {
+      // 6-14 days - stale
       weight = weights.stale;
       category = 'stale';
     } else {
-      // 15+ business days - old/abandoned
+      // 15+ days - old/abandoned
       weight = weights.old;
       category = 'abandoned';
     }
@@ -129,6 +137,9 @@ export class TicketWorkloadCalculator {
     agentId: string,
     tickets: Array<{ id: string; created_at: Date | string; status: number }>
   ): Promise<AgentWorkload> {
+    // Always reload weights to ensure we have the latest values
+    await this.loadTicketAgeWeights();
+    
     const now = new Date();
     const ticketWorkloads: TicketWorkload[] = [];
     const breakdown = {

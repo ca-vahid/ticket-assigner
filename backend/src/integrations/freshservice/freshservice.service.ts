@@ -8,6 +8,8 @@ import {
   FreshserviceTicketUpdate,
   FreshserviceCategory
 } from './freshservice.types';
+import { RateLimiter } from './rate-limiter';
+import { SyncProgressService } from '../../sync/sync-progress.service';
 
 @Injectable()
 export class FreshserviceService {
@@ -15,8 +17,12 @@ export class FreshserviceService {
   private readonly apiClient: AxiosInstance;
   private readonly domain: string;
   private readonly webhookSecret: string;
+  private readonly rateLimiter: RateLimiter;
 
-  constructor(private configService: ConfigService) {
+  constructor(
+    private configService: ConfigService,
+    private syncProgressService: SyncProgressService
+  ) {
     this.domain = this.configService.get('FRESHSERVICE_DOMAIN', '');
     this.webhookSecret = this.configService.get('FRESHSERVICE_WEBHOOK_SECRET', '');
     
@@ -30,6 +36,28 @@ export class FreshserviceService {
       },
       timeout: 10000
     });
+    
+    // Initialize rate limiter
+    this.rateLimiter = new RateLimiter({
+      maxRetries: 5,
+      initialDelay: 1000,
+      maxDelay: 30000,
+      backoffMultiplier: 2
+    });
+    
+    // Add response interceptor to track rate limit headers
+    this.apiClient.interceptors.response.use(
+      (response) => {
+        this.rateLimiter.updateFromHeaders(response.headers);
+        return response;
+      },
+      (error) => {
+        if (error.response?.headers) {
+          this.rateLimiter.updateFromHeaders(error.response.headers);
+        }
+        return Promise.reject(error);
+      }
+    );
   }
 
   async getTicket(ticketId: string): Promise<FreshserviceTicket> {
@@ -108,6 +136,7 @@ export class FreshserviceService {
       let page = params?.page || 1;
       let hasMore = true;
       const perPage = params?.per_page || 100;
+      const maxPages = 50; // Fetch up to 5000 tickets
 
       // Build query params
       const queryParams: any = {
@@ -134,85 +163,58 @@ export class FreshserviceService {
         }
       }
 
-      let retryCount = 0;
-      const maxRetries = 3;
-      
-      while (hasMore && page <= 50) { // Fetch up to 5000 tickets (50 pages * 100 per page)
-        try {
-          // Log progress every 5 pages
-          if (page % 5 === 0 || page === 1) {
-            this.logger.log(`Fetching tickets page ${page}... (${tickets.length} tickets so far)`);
-          }
-          
-          // Strategic pauses: Take breaks every 20 pages to reset rate limit window
-          if (page === 21 || page === 41) {
-            this.logger.log(`Taking a 8 second break at page ${page} to reset rate limits...`);
-            await new Promise(resolve => setTimeout(resolve, 8000));
-          }
-          
-          const response = await this.apiClient.get('/tickets', {
-            params: { ...queryParams, page }
-          });
-          
-          tickets.push(...(response.data.tickets || []));
-          
-          // Check if there are more pages
-          hasMore = response.data.tickets?.length === perPage;
-          
-          // If specific page was requested, don't continue
-          if (params?.page) {
-            hasMore = false;
-          }
-          
-          // Progressive delay with more aggressive slowdown
-          if (hasMore && page > 1) {
-            let delay;
-            if (page > 40) {
-              delay = 1000; // 1 second after page 40
-            } else if (page > 30) {
-              delay = 500; // 500ms for pages 31-40
-            } else if (page > 20) {
-              delay = 300; // 300ms for pages 21-30  
-            } else {
-              delay = 150; // 150ms for pages 2-20
-            }
-            await new Promise(resolve => setTimeout(resolve, delay));
-          }
-          
-          // Reset retry count on success
-          retryCount = 0;
-          page++;
-        } catch (pageError: any) {
-          // Handle rate limiting specifically
-          if (pageError.response?.status === 429) {
-            retryCount++;
-            if (retryCount > maxRetries) {
-              this.logger.error(`Failed after ${maxRetries} retries at page ${page}. Returning partial results.`);
-              break; // Exit with partial results instead of failing completely
+      while (hasMore && page <= maxPages) {
+        // Execute request with automatic retry and rate limiting
+        const response = await this.rateLimiter.executeWithRetry(
+          async () => {
+            // Log progress
+            if (page % 5 === 0 || page === 1) {
+              const message = `Fetching tickets page ${page}... (${tickets.length} tickets so far)`;
+              this.logger.log(message);
             }
             
-            // Exponential backoff: 5s, 10s, 20s
-            const waitTime = Math.min(5000 * Math.pow(2, retryCount - 1), 20000);
-            this.logger.warn(`Rate limited at page ${page}, waiting ${waitTime/1000}s... (retry ${retryCount}/${maxRetries})`);
-            await new Promise(resolve => setTimeout(resolve, waitTime));
-            // Don't increment page, retry the same page
-            continue;
-          }
-          // For other errors, throw
-          throw pageError;
+            return await this.apiClient.get('/tickets', {
+              params: { ...queryParams, page }
+            });
+          },
+          `tickets page ${page}`
+        );
+        
+        tickets.push(...(response.data.tickets || []));
+        
+        // Check if there are more pages
+        hasMore = response.data.tickets?.length === perPage;
+        
+        // If specific page was requested, don't continue
+        if (params?.page) {
+          hasMore = false;
         }
+        
+        // Get rate limit status and apply smart delays
+        const rateLimitStatus = this.rateLimiter.getStatus();
+        
+        // Log rate limit status periodically
+        if (page % 10 === 0) {
+          this.logger.debug(
+            `Rate limit status: ${rateLimitStatus.remaining}/${rateLimitStatus.total} ` +
+            `(${rateLimitStatus.percentUsed.toFixed(1)}% used, resets in ${rateLimitStatus.resetsIn}s)`
+          );
+        }
+        
+        page++;
       }
       
-      // Log final count
-      if (tickets.length > 0) {
-        this.logger.log(`✅ Successfully fetched ${tickets.length} tickets across ${page - 1} pages`);
-      }
+      // Log final completion
+      const successMessage = `✅ Successfully fetched ${tickets.length} tickets across ${page - 1} pages`;
+      this.logger.log(successMessage);
 
       return tickets;
     } catch (error) {
-      this.logger.error('Failed to fetch tickets from Freshservice', error);
+      const errorMessage = 'Failed to fetch tickets from Freshservice';
+      this.logger.error(errorMessage, error);
+      
       throw new HttpException(
-        'Failed to fetch tickets from Freshservice',
+        errorMessage,
         HttpStatus.SERVICE_UNAVAILABLE
       );
     }

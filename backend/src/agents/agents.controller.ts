@@ -13,6 +13,7 @@ import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Agent } from '../database/entities/agent.entity';
+import { Settings } from '../database/entities/settings.entity';
 
 @ApiTags('agents')
 @Controller('api/agents')
@@ -20,7 +21,24 @@ export class AgentsController {
   constructor(
     @InjectRepository(Agent)
     private agentRepository: Repository<Agent>,
+    @InjectRepository(Settings)
+    private settingsRepository: Repository<Settings>,
   ) {}
+
+  private async getWorkloadLimit(): Promise<number> {
+    const rulesSettings = await this.settingsRepository.findOne({
+      where: { key: 'eligibility.rules' }
+    });
+
+    if (rulesSettings && rulesSettings.value) {
+      const rules = rulesSettings.value;
+      const workloadRule = rules.find((r: any) => r.id === 'workload_limit');
+      if (workloadRule && workloadRule.config && workloadRule.config.maxTickets) {
+        return workloadRule.config.maxTickets;
+      }
+    }
+    return 5; // Default fallback
+  }
 
   @Get()
   @ApiOperation({ summary: 'Get all agents' })
@@ -153,12 +171,15 @@ export class AgentsController {
       throw new HttpException('Agent not found', HttpStatus.NOT_FOUND);
     }
     
+    // Get workload limit from settings
+    const workloadLimit = await this.getWorkloadLimit();
+    
     return {
       agentId: agent.id,
       name: `${agent.firstName} ${agent.lastName}`,
       currentTickets: agent.currentTicketCount,
-      maxTickets: agent.maxConcurrentTickets || 10,
-      utilizationPercentage: Math.round((agent.currentTicketCount / (agent.maxConcurrentTickets || 10)) * 100),
+      maxTickets: workloadLimit, // Use settings value
+      utilizationPercentage: Math.round((agent.currentTicketCount / workloadLimit) * 100),
       totalAssignments: agent.totalAssignments || 0,
       isAvailable: agent.isAvailable,
       isPto: agent.isPto

@@ -9,7 +9,9 @@ import { Agent } from '../database/entities/agent.entity';
 import { DetectedSkill } from '../database/entities/detected-skill.entity';
 import { SkillDetectionConfig } from '../database/entities/skill-detection-config.entity';
 import { SkillAuditLog } from '../database/entities/skill-audit-log.entity';
+import { Settings } from '../database/entities/settings.entity';
 import { FreshserviceModule } from '../integrations/freshservice/freshservice.module';
+import { SyncModule } from '../sync/sync.module';
 
 @Module({
   imports: [
@@ -17,9 +19,11 @@ import { FreshserviceModule } from '../integrations/freshservice/freshservice.mo
       Agent,
       DetectedSkill,
       SkillDetectionConfig,
-      SkillAuditLog
+      SkillAuditLog,
+      Settings
     ]),
-    FreshserviceModule
+    FreshserviceModule,
+    SyncModule
   ],
   providers: [
     SkillDetectionService,

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { Agent } from '../database/entities/agent.entity';
 import { Category } from '../database/entities/category.entity';
 import { Location } from '../database/entities/location.entity';
@@ -11,11 +12,13 @@ import { SyncTicketCountsCommand } from './sync-ticket-counts.command';
 import { TicketWorkloadCalculator } from './ticket-workload-calculator';
 import { SyncService } from './sync.service';
 import { SyncController } from './sync.controller';
+import { SyncProgressService } from './sync-progress.service';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Agent, Category, Location, Settings]),
     FreshserviceModule,
+    EventEmitterModule.forRoot(),
   ],
   controllers: [SyncController],
   providers: [
@@ -23,8 +26,9 @@ import { SyncController } from './sync.controller';
     SyncCategoriesCommand, 
     SyncTicketCountsCommand, 
     TicketWorkloadCalculator,
-    SyncService
+    SyncService,
+    SyncProgressService
   ],
-  exports: [SyncService, TicketWorkloadCalculator],
+  exports: [SyncService, TicketWorkloadCalculator, SyncProgressService],
 })
 export class SyncModule {}

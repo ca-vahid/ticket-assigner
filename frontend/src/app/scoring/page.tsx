@@ -15,6 +15,7 @@ import {
   Calculator,
   Save,
   RotateCcw,
+  RefreshCw,
   TrendingUp,
   Info,
   Brain,
@@ -34,6 +35,7 @@ import {
 } from 'lucide-react'
 import { apiService } from '@/services/api'
 import { toast } from 'sonner'
+import { SyncProgressBar } from '@/components/SyncProgressBar'
 import {
   LineChart,
   Line,
@@ -75,7 +77,7 @@ interface TicketAgeWeight {
 export default function ScoringPage() {
   const [weights, setWeights] = useState<ScoringWeight[]>([
     {
-      id: 'skill_match',
+      id: 'skillOverlap',
       name: 'Skill Match',
       description: 'Weight for matching agent skills with ticket requirements',
       value: 30,
@@ -83,7 +85,7 @@ export default function ScoringPage() {
       color: 'text-purple-600'
     },
     {
-      id: 'workload',
+      id: 'loadBalance',
       name: 'Workload Balance',
       description: 'Weight for distributing tickets evenly across agents',
       value: 25,
@@ -91,7 +93,7 @@ export default function ScoringPage() {
       color: 'text-blue-600'
     },
     {
-      id: 'level_match',
+      id: 'levelCloseness',
       name: 'Level Match',
       description: 'Weight for matching agent level (L1/L2/L3) with ticket complexity',
       value: 25,
@@ -99,7 +101,7 @@ export default function ScoringPage() {
       color: 'text-green-600'
     },
     {
-      id: 'location',
+      id: 'locationFit',
       name: 'Location Proximity',
       description: 'Weight for geographic proximity between agent and ticket',
       value: 10,
@@ -107,7 +109,7 @@ export default function ScoringPage() {
       color: 'text-orange-600'
     },
     {
-      id: 'vip_affinity',
+      id: 'vipAffinity',
       name: 'VIP Affinity',
       description: 'Weight for assigning VIP tickets to specialized agents',
       value: 10,
@@ -148,11 +150,16 @@ export default function ScoringPage() {
   ])
 
   const [testScenario, setTestScenario] = useState({
-    skills: ['password_reset', 'outlook'],
+    skills: [],
     level: 'L1',
-    location: 'Vancouver',
+    locationId: undefined as string | undefined,
     isVIP: false
   })
+  
+  const [availableSkills, setAvailableSkills] = useState<string[]>([])
+  const [availableLocations, setAvailableLocations] = useState<{ id: string; name: string; timezone?: string }[]>([])
+  const [testResults, setTestResults] = useState<any>(null)
+  const [testingScenario, setTestingScenario] = useState(false)
 
   const [scoringHistory] = useState([
     { date: 'Mon', avgScore: 82, assignments: 45 },
@@ -168,9 +175,10 @@ export default function ScoringPage() {
   const [hasTicketAgeChanges, setHasTicketAgeChanges] = useState(false)
   const [loading, setLoading] = useState(false)
 
-  // Load weights on mount
+  // Load weights and available data on mount
   useEffect(() => {
     loadWeights()
+    loadAvailableData()
   }, [])
 
   const loadWeights = async () => {
@@ -184,13 +192,16 @@ export default function ScoringPage() {
       
       if (scoringResponse.data) {
         const data = scoringResponse.data
-        setWeights(prev => [
-          { ...prev[0], value: Math.round(data.skillOverlap * 100) },
-          { ...prev[1], value: Math.round(data.loadBalance * 100) },
-          { ...prev[2], value: Math.round(data.levelCloseness * 100) },
-          { ...prev[3], value: Math.round(data.locationFit * 100) },
-          { ...prev[4], value: Math.round(data.vipAffinity * 100) }
-        ])
+        setWeights(prev => prev.map(w => {
+          switch(w.id) {
+            case 'skillOverlap': return { ...w, value: Math.round(data.skillOverlap * 100) }
+            case 'loadBalance': return { ...w, value: Math.round(data.loadBalance * 100) }
+            case 'levelCloseness': return { ...w, value: Math.round(data.levelCloseness * 100) }
+            case 'locationFit': return { ...w, value: Math.round(data.locationFit * 100) }
+            case 'vipAffinity': return { ...w, value: Math.round(data.vipAffinity * 100) }
+            default: return w
+          }
+        }))
       }
       
       if (ticketAgeResponse.data) {
@@ -206,6 +217,39 @@ export default function ScoringPage() {
       console.error('Failed to load weights:', error)
     } finally {
       setLoading(false)
+    }
+  }
+  
+  const loadAvailableData = async () => {
+    try {
+      const [skillsResponse, locationsResponse] = await Promise.all([
+        apiService.getAvailableSkills(),
+        apiService.getAvailableLocations()
+      ])
+      
+      if (skillsResponse.data) {
+        setAvailableSkills(skillsResponse.data)
+      }
+      
+      if (locationsResponse.data) {
+        setAvailableLocations(locationsResponse.data)
+      }
+    } catch (error) {
+      console.error('Failed to load available data:', error)
+    }
+  }
+  
+  const runTestScenario = async () => {
+    setTestingScenario(true)
+    try {
+      // Use the centralized assignment test endpoint that includes eligibility + scoring
+      const response = await apiService.testAssignmentScenario(testScenario)
+      setTestResults(response.data)
+    } catch (error) {
+      console.error('Failed to run test scenario:', error)
+      toast.error('Failed to run test scenario')
+    } finally {
+      setTestingScenario(false)
     }
   }
 
@@ -257,14 +301,11 @@ export default function ScoringPage() {
       const promises = []
       
       if (hasChanges) {
-        // Convert weights to backend format
-        const scoringWeights = {
-          skillOverlap: weights[0].value / 100,
-          loadBalance: weights[1].value / 100,
-          levelCloseness: weights[2].value / 100,
-          locationFit: weights[3].value / 100,
-          vipAffinity: weights[4].value / 100
-        }
+        // Convert weights to backend format using IDs
+        const scoringWeights = weights.reduce((acc, w) => {
+          acc[w.id] = w.value / 100
+          return acc
+        }, {} as any)
         promises.push(apiService.updateScoringWeights(scoringWeights))
       }
       
@@ -280,7 +321,22 @@ export default function ScoringPage() {
       
       await Promise.all(promises)
       
-      toast.success('Weights saved successfully')
+      // If ticket age weights were changed, recalculate workloads
+      if (hasTicketAgeChanges) {
+        toast.info('Recalculating agent workloads...')
+        try {
+          const result = await apiService.recalculateWorkloads()
+          if (result.data.success) {
+            toast.success(`Weights saved and workloads updated for ${result.data.updated} agents`)
+          }
+        } catch (error) {
+          console.error('Failed to recalculate workloads:', error)
+          toast.warning('Weights saved but workload recalculation failed. Please sync tickets manually.')
+        }
+      } else {
+        toast.success('Weights saved successfully')
+      }
+      
       setHasChanges(false)
       setHasTicketAgeChanges(false)
     } catch (error) {
@@ -307,15 +363,6 @@ export default function ScoringPage() {
     fullMark: 50
   }))
 
-  const calculateExampleScore = () => {
-    let score = 0
-    if (testScenario.skills.length > 0) score += weights[0].value * 0.8
-    score += weights[1].value * 0.7
-    if (testScenario.level === 'L1') score += weights[2].value * 0.9
-    if (testScenario.location === 'Vancouver') score += weights[3].value * 1.0
-    if (testScenario.isVIP) score += weights[4].value * 0.5
-    return Math.min(Math.round(score), 100)
-  }
 
   return (
     <MainLayout>
@@ -622,22 +669,43 @@ export default function ScoringPage() {
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label>Required Skills</Label>
-                    <div className="flex flex-wrap gap-2">
-                      {['password_reset', 'outlook', 'vpn', 'hardware'].map(skill => (
+                    <Select
+                      value=""
+                      onValueChange={(skill) => {
+                        if (!testScenario.skills.includes(skill)) {
+                          setTestScenario(prev => ({
+                            ...prev,
+                            skills: [...prev.skills, skill]
+                          }))
+                        }
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select skills..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableSkills.filter(s => !testScenario.skills.includes(s)).map(skill => (
+                          <SelectItem key={skill} value={skill}>
+                            {skill.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {testScenario.skills.map(skill => (
                         <Badge
                           key={skill}
-                          variant={testScenario.skills.includes(skill) ? 'default' : 'outline'}
+                          variant="default"
                           className="cursor-pointer"
                           onClick={() => {
                             setTestScenario(prev => ({
                               ...prev,
-                              skills: prev.skills.includes(skill)
-                                ? prev.skills.filter(s => s !== skill)
-                                : [...prev.skills, skill]
+                              skills: prev.skills.filter(s => s !== skill)
                             }))
                           }}
                         >
-                          {skill}
+                          {skill.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                          <span className="ml-1 text-xs">×</span>
                         </Badge>
                       ))}
                     </div>
@@ -661,18 +729,24 @@ export default function ScoringPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label>Location</Label>
+                    <Label>Location (Optional)</Label>
                     <Select
-                      value={testScenario.location}
-                      onValueChange={(value) => setTestScenario(prev => ({ ...prev, location: value }))}
+                      value={testScenario.locationId || ''}
+                      onValueChange={(value) => setTestScenario(prev => ({ 
+                        ...prev, 
+                        locationId: value === 'none' ? undefined : value 
+                      }))}
                     >
                       <SelectTrigger>
-                        <SelectValue />
+                        <SelectValue placeholder="No location requirement" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="Vancouver">Vancouver</SelectItem>
-                        <SelectItem value="Toronto">Toronto</SelectItem>
-                        <SelectItem value="Remote">Remote</SelectItem>
+                        <SelectItem value="none">No location requirement</SelectItem>
+                        {availableLocations.map(location => (
+                          <SelectItem key={location.id} value={location.id}>
+                            {location.name} {location.timezone && `(${location.timezone})`}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -688,9 +762,23 @@ export default function ScoringPage() {
                     </Button>
                   </div>
 
-                  <Button className="w-full" size="sm">
-                    <Play className="h-4 w-4 mr-2" />
-                    Run Simulation
+                  <Button 
+                    className="w-full" 
+                    size="sm"
+                    onClick={runTestScenario}
+                    disabled={testingScenario || testScenario.skills.length === 0}
+                  >
+                    {testingScenario ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                        Running...
+                      </>
+                    ) : (
+                      <>
+                        <Play className="h-4 w-4 mr-2" />
+                        Run Simulation
+                      </>
+                    )}
                   </Button>
                 </CardContent>
               </Card>
@@ -699,59 +787,243 @@ export default function ScoringPage() {
                 <CardHeader>
                   <CardTitle>Simulation Results</CardTitle>
                   <CardDescription>
-                    Score breakdown for the test scenario
+                    {testResults ? 'Live scoring results from actual agent data' : 'Run a simulation to see results'}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-4">
-                    <div className="text-center py-4">
-                      <div className="text-5xl font-bold text-blue-600">
-                        {calculateExampleScore()}
+                  {testResults ? (
+                    <div className="space-y-4">
+                      {/* Statistics */}
+                      <div className="grid grid-cols-4 gap-2 text-center">
+                        <div>
+                          <div className="text-xl font-bold text-gray-600">
+                            {testResults.statistics?.totalAgents || 0}
+                          </div>
+                          <p className="text-xs text-muted-foreground">Total</p>
+                        </div>
+                        <div>
+                          <div className="text-xl font-bold text-blue-600">
+                            {testResults.statistics?.eligibleAgents || testResults.eligibleAgents?.length || 0}
+                          </div>
+                          <p className="text-xs text-muted-foreground">Eligible</p>
+                        </div>
+                        <div>
+                          <div className="text-xl font-bold text-green-600">
+                            {testResults.statistics?.qualifiedAgents || testResults.topRecommendations?.length || 0}
+                          </div>
+                          <p className="text-xs text-muted-foreground">Qualified</p>
+                        </div>
+                        <div>
+                          <div className="text-xl font-bold text-purple-600">
+                            {(testResults.statistics?.averageScore * 100 || 0).toFixed(0)}
+                          </div>
+                          <p className="text-xs text-muted-foreground">Avg Score</p>
+                        </div>
                       </div>
-                      <p className="text-sm text-muted-foreground mt-1">Overall Score</p>
-                    </div>
 
-                    <div className="space-y-3">
-                      {weights.map((weight) => {
-                        const factorScore = 
-                          weight.id === 'skill_match' ? (testScenario.skills.length > 0 ? 80 : 0) :
-                          weight.id === 'workload' ? 70 :
-                          weight.id === 'level_match' ? (testScenario.level === 'L1' ? 90 : 60) :
-                          weight.id === 'location' ? (testScenario.location === 'Vancouver' ? 100 : 50) :
-                          weight.id === 'vip_affinity' ? (testScenario.isVIP ? 50 : 0) : 0
-                        
-                        const contribution = (weight.value * factorScore) / 100
-                        const WeightIcon = weight.icon
+                      {/* Eligibility Filters Applied */}
+                      {testResults.filters && (
+                        <Alert className="py-2">
+                          <Info className="h-3 w-3" />
+                          <AlertDescription className="text-xs">
+                            <strong>Filters Applied:</strong> Available agents • 
+                            {testResults.filters.checkPTO && ' No PTO •'}
+                            {testResults.filters.maxLoadPercentage && ` < ${(testResults.filters.maxLoadPercentage * 100).toFixed(0)}% load •`}
+                            {testResults.filters.minLevel && ` Level ≥ ${testResults.filters.minLevel} •`}
+                            {testResults.filters.requiresOnsite && ' Onsite capable'}
+                            {testResults.statistics?.minScoreThreshold && (
+                              <span className="block mt-1">
+                                <strong>Min Score Threshold:</strong> {(testResults.statistics.minScoreThreshold * 100).toFixed(0)}% • 
+                                {testResults.statistics.agentsMeetingThreshold || 0} agents qualify
+                              </span>
+                            )}
+                          </AlertDescription>
+                        </Alert>
+                      )}
 
-                        return (
-                          <div key={weight.id} className="space-y-1">
-                            <div className="flex items-center justify-between text-sm">
-                              <div className="flex items-center gap-2">
-                                <WeightIcon className={`h-3 w-3 ${weight.color}`} />
-                                <span>{weight.name}</span>
-                              </div>
-                              <span className="font-medium">+{contribution.toFixed(1)}</span>
+                      {/* Scoring Algorithm Breakdown */}
+                      <Alert className="py-2 bg-blue-50 border-blue-200">
+                        <Info className="h-3 w-3" />
+                        <AlertDescription className="text-xs">
+                          <strong>Total Score Calculation:</strong>
+                          <div className="mt-1 space-y-1">
+                            <div className="flex justify-between">
+                              <span>• <strong>Skill Match ({(weights.find(w => w.id === 'skillOverlap')?.value || 30)}%):</strong> How many required skills agent has</span>
+                              <span className="text-xs text-gray-600">1.0 = all skills, 0.5 = half skills</span>
                             </div>
-                            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                              <div 
-                                className="h-full bg-blue-500 transition-all"
-                                style={{ width: `${factorScore}%` }}
-                              />
+                            <div className="flex justify-between">
+                              <span>• <strong>Level Match ({(weights.find(w => w.id === 'levelCloseness')?.value || 25)}%):</strong> How close agent level is to requirement</span>
+                              <span className="text-xs text-gray-600">1.0 = exact, 0.8 = ±1 level, 0.5 = ±2 levels</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>• <strong>Load Balance ({(weights.find(w => w.id === 'loadBalance')?.value || 25)}%):</strong> Lower workload = higher score</span>
+                              <span className="text-xs text-gray-600">Linear: score = 1 - (weighted tickets / max)</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>• <strong>Location ({(weights.find(w => w.id === 'locationFit')?.value || 10)}%):</strong> Same location or timezone match</span>
+                              <span className="text-xs text-gray-600">1.0 = same/no requirement, 0.9 = different</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>• <strong>VIP ({(weights.find(w => w.id === 'vipAffinity')?.value || 10)}%):</strong> Agent experience for VIP tickets</span>
+                              <span className="text-xs text-gray-600">Based on satisfaction score & experience</span>
                             </div>
                           </div>
-                        )
-                      })}
-                    </div>
+                          <div className="mt-2 pt-2 border-t">
+                            <strong>Workload Details:</strong> We use <strong>weighted workload</strong> where fresh tickets (today) count 2x, 
+                            recent (2-5 days) count 1.2x to prevent gaming.
+                            <div className="mt-1 grid grid-cols-4 gap-2 text-xs">
+                              <span>🟢 0-30%: Score 80-100</span>
+                              <span>🟡 30-70%: Score 40-80</span>
+                              <span>🟠 70-85%: Score 20-40</span>
+                              <span>🔴 85%+: Score 0-20</span>
+                            </div>
+                          </div>
+                        </AlertDescription>
+                      </Alert>
 
-                    <Alert>
-                      <Zap className="h-4 w-4" />
-                      <AlertDescription>
-                        Score of {calculateExampleScore()} indicates a 
-                        <span className="font-medium text-green-600"> strong match</span>.
-                        This ticket would likely be auto-assigned.
-                      </AlertDescription>
-                    </Alert>
-                  </div>
+                      {/* All Agent Scores */}
+                      {testResults.topRecommendations && testResults.topRecommendations.length > 0 ? (
+                        <div className="space-y-2">
+                          <h4 className="text-sm font-semibold flex items-center gap-2">
+                            All Agents Ranked by Score ({testResults.topRecommendations.length} agents)
+                            {testResults.topRecommendations[0]?.wouldAutoAssign && (
+                              <Badge variant="default" className="text-xs">Would Auto-Assign #1</Badge>
+                            )}
+                          </h4>
+                          {testResults.topRecommendations.map((rec: any) => (
+                            <div key={rec.agentId} className={`p-3 border rounded-lg space-y-2 ${!rec.meetsMinThreshold ? 'opacity-60 bg-gray-50' : ''}`}>
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <span className="font-medium">#{rec.rank}. {rec.agentName}</span>
+                                  <Badge variant="outline" className="ml-2">{rec.level}</Badge>
+                                  {!rec.meetsMinThreshold && (
+                                    <Badge variant="secondary" className="ml-2 text-xs">Below Threshold</Badge>
+                                  )}
+                                  {rec.confidence && (
+                                    <span className="ml-2 text-xs text-muted-foreground">
+                                      ({(rec.confidence * 100).toFixed(0)}% confidence)
+                                    </span>
+                                  )}
+                                </div>
+                                <div className={`text-2xl font-bold ${rec.meetsMinThreshold ? 'text-blue-600' : 'text-gray-400'}`}>
+                                  {(rec.totalScore * 100).toFixed(0)}
+                                </div>
+                              </div>
+                              <div className="space-y-1">
+                                <div className="text-xs text-muted-foreground">
+                                  {rec.location} • 
+                                  <span className={`font-medium ${rec.currentWorkload === 0 ? 'text-green-600' : rec.currentWorkload >= 4 ? 'text-red-600' : 'text-yellow-600'}`}>
+                                    {rec.currentWorkload || 0}/{rec.maxConcurrentTickets || 5} tickets
+                                  </span>
+                                  {' '}(weighted: {Number(rec.weightedWorkload || 0).toFixed(1)})
+                                </div>
+                                {/* Workload visual bar */}
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-muted-foreground w-16">Workload:</span>
+                                  <div className="flex-1 bg-gray-200 rounded-full h-2 relative">
+                                    <div 
+                                      className={`h-2 rounded-full transition-all ${
+                                        (rec.currentWorkload / (rec.maxConcurrentTickets || 5)) >= 0.8 ? 'bg-red-500' :
+                                        (rec.currentWorkload / (rec.maxConcurrentTickets || 5)) >= 0.5 ? 'bg-yellow-500' :
+                                        'bg-green-500'
+                                      }`}
+                                      style={{ width: `${Math.min(100, (rec.currentWorkload / (rec.maxConcurrentTickets || 5)) * 100)}%` }}
+                                      title={`Current: ${rec.currentWorkload} tickets, Weighted: ${Number(rec.weightedWorkload || 0).toFixed(1)} (fresher tickets count more)`}
+                                    />
+                                  </div>
+                                  <span className="text-xs font-medium w-12">
+                                    {((rec.currentWorkload / (rec.maxConcurrentTickets || 5)) * 100).toFixed(0)}%
+                                  </span>
+                                  <Badge variant="outline" className="text-xs px-1 py-0">
+                                    Score: {(rec.breakdown.loadScore * 100).toFixed(0)}
+                                  </Badge>
+                                </div>
+                              </div>
+                              {rec.assignmentReason && (
+                                <div className="text-xs bg-blue-50 p-2 rounded">
+                                  <strong>Reason:</strong> {rec.assignmentReason}
+                                </div>
+                              )}
+                              {/* Score Breakdown with Weights */}
+                              <div className="space-y-1 p-2 bg-gray-50 rounded text-xs">
+                                <div className="font-semibold mb-1">Score Breakdown:</div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div className="flex justify-between">
+                                    <span className="text-muted-foreground">Skill ({weights.find(w => w.id === 'skillOverlap')?.value || 30}%):</span>
+                                    <span className="font-medium">{(rec.breakdown.skillScore * 100).toFixed(0)} → {(rec.breakdown.skillScore * (weights.find(w => w.id === 'skillOverlap')?.value || 30)).toFixed(1)}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-muted-foreground">Level ({weights.find(w => w.id === 'levelCloseness')?.value || 25}%):</span>
+                                    <span className="font-medium">{(rec.breakdown.levelScore * 100).toFixed(0)} → {(rec.breakdown.levelScore * (weights.find(w => w.id === 'levelCloseness')?.value || 25)).toFixed(1)}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-muted-foreground">Load ({weights.find(w => w.id === 'loadBalance')?.value || 25}%):</span>
+                                    <span className="font-medium">{(rec.breakdown.loadScore * 100).toFixed(0)} → {(rec.breakdown.loadScore * (weights.find(w => w.id === 'loadBalance')?.value || 25)).toFixed(1)}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-muted-foreground">Location ({weights.find(w => w.id === 'locationFit')?.value || 10}%):</span>
+                                    <span className="font-medium">{(rec.breakdown.locationScore * 100).toFixed(0)} → {(rec.breakdown.locationScore * (weights.find(w => w.id === 'locationFit')?.value || 10)).toFixed(1)}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-muted-foreground">VIP ({weights.find(w => w.id === 'vipAffinity')?.value || 10}%):</span>
+                                    <span className="font-medium">{(rec.breakdown.vipScore * 100).toFixed(0)} → {(rec.breakdown.vipScore * (weights.find(w => w.id === 'vipAffinity')?.value || 10)).toFixed(1)}</span>
+                                  </div>
+                                </div>
+                                <div className="pt-1 mt-1 border-t font-semibold flex justify-between">
+                                  <span>Total Score:</span>
+                                  <span>{(rec.totalScore * 100).toFixed(0)}</span>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <Alert>
+                          <AlertCircle className="h-4 w-4" />
+                          <AlertDescription>
+                            {testResults.statistics?.eligibleAgents === 0 
+                              ? 'No eligible agents found. Check eligibility filters above.'
+                              : `No agents met the minimum score threshold (${(testResults.statistics?.minScoreThreshold * 100 || 50).toFixed(0)}%).`}
+                            {testResults.statistics?.excludedReasons && Object.keys(testResults.statistics.excludedReasons).length > 0 && (
+                              <div className="mt-2 text-xs">
+                                <strong>Excluded:</strong>
+                                {Object.entries(testResults.statistics.excludedReasons).map(([reason, count]: [string, any]) => (
+                                  <span key={reason}> {reason}: {count} agents •</span>
+                                ))}
+                              </div>
+                            )}
+                          </AlertDescription>
+                        </Alert>
+                      )}
+
+                      {/* Score Distribution */}
+                      {testResults.statistics?.scoreDistribution && (
+                        <div className="space-y-2">
+                          <h4 className="text-sm font-semibold">Score Distribution</h4>
+                          <div className="space-y-1">
+                            {testResults.statistics.scoreDistribution.map((range: any) => (
+                              <div key={range.range} className="flex items-center gap-2 text-xs">
+                                <span className="w-12 text-muted-foreground">{range.range}</span>
+                                <div className="flex-1 h-4 bg-gray-100 rounded-full overflow-hidden">
+                                  <div 
+                                    className="h-full bg-blue-500"
+                                    style={{ width: `${testResults.statistics.scoredAgents > 0 ? (range.count / testResults.statistics.scoredAgents) * 100 : 0}%` }}
+                                  />
+                                </div>
+                                <span className="w-8 text-right">{range.count}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-gray-500">
+                      <FlaskConical className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+                      <p>Configure a test scenario and click "Run Simulation"</p>
+                      <p className="text-xs mt-1">Results will show real agent scores</p>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -898,6 +1170,9 @@ export default function ScoringPage() {
           </TabsContent>
         </Tabs>
       </div>
+      
+      {/* Real-time Sync Progress */}
+      <SyncProgressBar />
     </MainLayout>
   )
 }

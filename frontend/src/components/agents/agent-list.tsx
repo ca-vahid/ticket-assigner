@@ -25,9 +25,21 @@ interface AgentListProps {
   selectedAgent: Agent | null;
   onSelectAgent: (agent: Agent) => void;
   loading?: boolean;
+  ticketAgeWeights?: {
+    fresh: number;
+    recent: number;
+    stale: number;
+    old: number;
+  };
 }
 
-export function AgentList({ agents, selectedAgent, onSelectAgent, loading }: AgentListProps) {
+export function AgentList({ 
+  agents, 
+  selectedAgent, 
+  onSelectAgent, 
+  loading,
+  ticketAgeWeights = { fresh: 2.0, recent: 1.2, stale: 0.5, old: 0.1 }
+}: AgentListProps) {
   if (loading) {
     return (
       <div className="space-y-2">
@@ -98,11 +110,33 @@ export function AgentList({ agents, selectedAgent, onSelectAgent, loading }: Age
               </span>
               <div className="font-semibold">
                 {agent.currentTicketCount || 0}
-                {agent.weightedTicketCount && Number(agent.weightedTicketCount) !== agent.currentTicketCount && (
-                  <span className="text-orange-600 ml-1">
-                    ({Number(agent.weightedTicketCount).toFixed(1)}w)
-                  </span>
-                )}
+                {(() => {
+                  // Calculate weighted count from breakdown if available
+                  if (agent.ticketWorkloadBreakdown) {
+                    const breakdown = agent.ticketWorkloadBreakdown;
+                    const weighted = 
+                      (breakdown.fresh || 0) * ticketAgeWeights.fresh +
+                      (breakdown.recent || 0) * ticketAgeWeights.recent +
+                      (breakdown.stale || 0) * ticketAgeWeights.stale +
+                      (breakdown.abandoned || 0) * ticketAgeWeights.old;
+                    
+                    if (weighted > 0 && weighted !== agent.currentTicketCount) {
+                      return (
+                        <span className="text-orange-600 ml-1">
+                          ({weighted.toFixed(1)}w)
+                        </span>
+                      );
+                    }
+                  } else if (agent.weightedTicketCount && Number(agent.weightedTicketCount) !== agent.currentTicketCount) {
+                    // Fallback to stored weighted count if no breakdown
+                    return (
+                      <span className="text-orange-600 ml-1">
+                        ({Number(agent.weightedTicketCount).toFixed(1)}w)
+                      </span>
+                    );
+                  }
+                  return null;
+                })()}
               </div>
             </div>
             
@@ -127,23 +161,39 @@ export function AgentList({ agents, selectedAgent, onSelectAgent, loading }: Age
             )}
             
             {/* Mini workload bar */}
-            {(agent.weightedTicketCount || agent.currentTicketCount > 0) && (
+            {(agent.currentTicketCount > 0) && (
               <div className="mt-1">
                 <div className="w-full bg-gray-200 rounded-full h-1">
-                  <div 
-                    className={`h-1 rounded-full transition-all ${
-                      (Number(agent.weightedTicketCount) || agent.currentTicketCount) > 8 ? 'bg-red-500' :
-                      (Number(agent.weightedTicketCount) || agent.currentTicketCount) > 5 ? 'bg-yellow-500' :
-                      'bg-green-500'
-                    }`}
-                    style={{ 
-                      width: `${Math.min(
-                        ((Number(agent.weightedTicketCount) || agent.currentTicketCount) / 
-                        Math.max(10, Math.ceil((Number(agent.weightedTicketCount) || agent.currentTicketCount) * 1.2))) * 100, 
-                        100
-                      )}%` 
-                    }}
-                  />
+                  {(() => {
+                    // Calculate weighted count for bar
+                    let weightedCount = agent.currentTicketCount;
+                    if (agent.ticketWorkloadBreakdown) {
+                      const breakdown = agent.ticketWorkloadBreakdown;
+                      weightedCount = 
+                        (breakdown.fresh || 0) * ticketAgeWeights.fresh +
+                        (breakdown.recent || 0) * ticketAgeWeights.recent +
+                        (breakdown.stale || 0) * ticketAgeWeights.stale +
+                        (breakdown.abandoned || 0) * ticketAgeWeights.old;
+                    } else if (agent.weightedTicketCount) {
+                      weightedCount = Number(agent.weightedTicketCount);
+                    }
+                    
+                    return (
+                      <div 
+                        className={`h-1 rounded-full transition-all ${
+                          weightedCount > 8 ? 'bg-red-500' :
+                          weightedCount > 5 ? 'bg-yellow-500' :
+                          'bg-green-500'
+                        }`}
+                        style={{ 
+                          width: `${Math.min(
+                            (weightedCount / Math.max(10, Math.ceil(weightedCount * 1.2))) * 100, 
+                            100
+                          )}%` 
+                        }}
+                      />
+                    );
+                  })()}
                 </div>
               </div>
             )}

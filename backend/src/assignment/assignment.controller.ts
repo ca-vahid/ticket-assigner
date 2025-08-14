@@ -50,6 +50,28 @@ export class AssignmentController {
     return { decisionId };
   }
 
+  @Post('test-scenario')
+  @ApiOperation({ summary: 'Test assignment scenario without creating records' })
+  @ApiResponse({ status: 200, description: 'Test scenario results' })
+  async testScenario(
+    @Body() scenario: {
+      skills: string[];
+      level: string;
+      locationId?: string;
+      isVIP: boolean;
+      categoryId?: string;
+    }
+  ): Promise<any> {
+    return this.assignmentService.testAssignmentScenario(scenario);
+  }
+
+  @Get('debug/agent-skills')
+  @ApiOperation({ summary: 'Debug endpoint to see agent skills' })
+  @ApiResponse({ status: 200, description: 'Agent skills debug info' })
+  async debugAgentSkills(): Promise<any> {
+    return this.assignmentService.debugAgentSkills();
+  }
+
   @Put('settings/reload')
   @ApiOperation({ summary: 'Reload assignment settings' })
   @ApiResponse({ status: 200, description: 'Settings reloaded' })

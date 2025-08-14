@@ -83,5 +83,29 @@ export const DEFAULT_SETTINGS = [
     value: true,
     description: 'Enable notification system',
     category: 'notifications'
+  },
+  {
+    key: 'sync.lastAgentSync',
+    value: null,
+    description: 'Last time agents were synced',
+    category: 'sync'
+  },
+  {
+    key: 'sync.lastTicketSync',
+    value: null,
+    description: 'Last time ticket counts were synced',
+    category: 'sync'
+  },
+  {
+    key: 'sync.lastWorkloadRecalc',
+    value: null,
+    description: 'Last time workloads were recalculated',
+    category: 'sync'
+  },
+  {
+    key: 'sync.lastSkillDetection',
+    value: null,
+    description: 'Last time skills were detected for all agents',
+    category: 'sync'
   }
 ];

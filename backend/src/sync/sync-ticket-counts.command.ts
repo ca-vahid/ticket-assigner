@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Agent } from '../database/entities/agent.entity';
 import { FreshserviceService } from '../integrations/freshservice/freshservice.service';
 import { TicketWorkloadCalculator } from './ticket-workload-calculator';
+import { SyncProgressService } from './sync-progress.service';
 
 @Injectable()
 export class SyncTicketCountsCommand {
@@ -15,12 +16,16 @@ export class SyncTicketCountsCommand {
     private agentRepository: Repository<Agent>,
     private freshserviceService: FreshserviceService,
     private workloadCalculator: TicketWorkloadCalculator,
+    private syncProgressService: SyncProgressService,
   ) {}
 
   async execute(): Promise<{ updated: number; total: number }> {
     this.logger.log('🎫 Starting ticket count sync...');
 
     try {
+      // Emit start event
+      this.syncProgressService.startSync('tickets', 50);
+      
       // Get all active agents
       const agents = await this.agentRepository.find({
         where: { isAvailable: true },
@@ -35,11 +40,31 @@ export class SyncTicketCountsCommand {
       // Status: 2 = Open, 3 = Pending, 4 = Resolved, 5 = Closed
       
       this.logger.log('Fetching all tickets from Freshservice (this may take a minute)...');
+      
+      // Create a wrapper to emit progress during ticket fetching
+      const startTime = Date.now();
+      
+      // Set up interval to emit progress while fetching
+      // Use indeterminate progress (no percentage) for unknown duration
+      const progressInterval = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        // Don't send current/total for indeterminate progress
+        this.syncProgressService.updateProgress(
+          'tickets',
+          undefined, // No current value
+          undefined, // No total value
+          `Fetching tickets from Freshservice... ${elapsed}s elapsed`
+        );
+      }, 2000); // Update every 2 seconds
+      
       // Fetch tickets with proper pagination
       const allTicketsRaw = await this.freshserviceService.getTickets({
         per_page: 100,
         include: 'requester,stats', // Include additional ticket info
       });
+      
+      // Clear the progress interval
+      clearInterval(progressInterval);
       
       // Filter for open and pending tickets only (status 2 and 3)
       const allTickets = allTicketsRaw.filter(ticket => 
@@ -76,9 +101,22 @@ export class SyncTicketCountsCommand {
         }
       }
 
+      // Start fresh workload progress
+      this.syncProgressService.startSync('workload', agents.length);
+      
       // Update each agent's ticket count and workload
+      let processedAgents = 0;
       for (const agent of agents) {
         const agentTickets = agentTicketsMap.get(agent.id) || [];
+        
+        // Emit progress for processing agents
+        processedAgents++;
+        this.syncProgressService.updateProgress(
+          'workload',
+          processedAgents,
+          agents.length,
+          `Processing workload for ${agent.firstName} ${agent.lastName}`
+        );
         
         // Special logging for debugging randrews
         if (agent.email === 'randrews@bgcengineering.ca') {
@@ -121,6 +159,13 @@ export class SyncTicketCountsCommand {
       }
 
       this.logger.log(`✅ Ticket count sync completed: ${updated}/${agents.length} agents updated`);
+      
+      // Emit completion
+      this.syncProgressService.completeSync(
+        'workload',
+        `Completed: ${updated} agents updated`,
+        { updated, total: agents.length }
+      );
 
       return {
         updated,
@@ -128,6 +173,7 @@ export class SyncTicketCountsCommand {
       };
     } catch (error) {
       this.logger.error('Failed to sync ticket counts:', error);
+      this.syncProgressService.errorSync('tickets', 'Sync failed', { error: error.message });
       throw error;
     }
   }

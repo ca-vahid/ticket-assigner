@@ -25,4 +25,14 @@ export class SettingsController {
   async updateAutoAssignStatus(@Body() body: { enabled: boolean }) {
     return this.settingsService.updateAutoAssignStatus(body.enabled);
   }
+
+  @Get('eligibility-rules')
+  async getEligibilityRules() {
+    return this.settingsService.getEligibilityRules();
+  }
+
+  @Put('eligibility-rules')
+  async updateEligibilityRules(@Body() rules: any[]) {
+    return this.settingsService.updateEligibilityRules(rules);
+  }
 }

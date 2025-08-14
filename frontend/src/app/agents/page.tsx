@@ -11,8 +11,22 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { RefreshCw, Search, Users, Upload, TicketIcon, Brain, UserX, UserCheck, ExternalLink } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
+import { RefreshCw, Search, Users, Upload, TicketIcon, Brain, UserX, UserCheck, ExternalLink, Calculator } from 'lucide-react';
+import { apiService } from '@/services/api';
+import { toast } from 'sonner';
 import { useAgents } from '@/hooks/useAgents';
+import { SyncProgressBar } from '@/components/SyncProgressBar';
 
 export default function AgentsPage() {
   const router = useRouter();
@@ -24,6 +38,23 @@ export default function AgentsPage() {
   const [syncingTickets, setSyncingTickets] = useState(false);
   const [detectingSkills, setDetectingSkills] = useState<string | null>(null);
   const [detectionResult, setDetectionResult] = useState<any>(null);
+  const [syncTimestamps, setSyncTimestamps] = useState<{
+    lastAgentSync?: Date;
+    lastTicketSync?: Date;
+    lastWorkloadRecalc?: Date;
+    lastSkillDetection?: Date;
+  }>({});
+  const [ticketAgeWeights, setTicketAgeWeights] = useState<{
+    fresh: number;
+    recent: number;
+    stale: number;
+    old: number;
+  }>({
+    fresh: 2.0,
+    recent: 1.2,
+    stale: 0.5,
+    old: 0.1
+  });
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean;
     title: string;
@@ -36,6 +67,48 @@ export default function AgentsPage() {
     description: '',
     onConfirm: () => {},
   });
+
+  // Load sync timestamps on mount and after sync operations
+  useEffect(() => {
+    loadSyncTimestamps();
+    loadTicketAgeWeights();
+  }, []);
+
+  const loadSyncTimestamps = async () => {
+    try {
+      const response = await apiService.getSyncTimestamps();
+      setSyncTimestamps(response.data);
+    } catch (error) {
+      console.error('Failed to load sync timestamps:', error);
+    }
+  };
+
+  const loadTicketAgeWeights = async () => {
+    try {
+      const response = await apiService.getTicketAgeWeights();
+      if (response.data) {
+        setTicketAgeWeights(response.data);
+      }
+    } catch (error) {
+      console.error('Failed to load ticket age weights:', error);
+    }
+  };
+
+  const formatSyncTimestamp = (timestamp?: Date | string) => {
+    if (!timestamp) return 'Never';
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString();
+  };
 
   // Auto-update selectedAgent when agents data changes
   useEffect(() => {
@@ -52,6 +125,7 @@ export default function AgentsPage() {
     try {
       await syncAgents();
       await refreshAgents();
+      await loadSyncTimestamps();
     } finally {
       setSyncing(false);
     }
@@ -156,9 +230,27 @@ export default function AgentsPage() {
       if (data.success) {
         console.log(data.message);
         await refreshAgents();
+        await loadSyncTimestamps();
       }
     } catch (error) {
       console.error('Failed to sync ticket counts:', error);
+    } finally {
+      setSyncingTickets(false);
+    }
+  };
+
+  const handleRecalculateWorkloads = async () => {
+    setSyncingTickets(true);
+    try {
+      const response = await apiService.recalculateWorkloads();
+      if (response.data.success) {
+        toast.success(`Recalculated workloads for ${response.data.updated} agents`);
+        await refreshAgents();
+        await loadSyncTimestamps();
+      }
+    } catch (error) {
+      console.error('Failed to recalculate workloads:', error);
+      toast.error('Failed to recalculate workloads');
     } finally {
       setSyncingTickets(false);
     }
@@ -240,60 +332,126 @@ export default function AgentsPage() {
           
           {/* Actions */}
           <div className="flex gap-2">
-            <Button
-              onClick={handleSync}
-              disabled={syncing}
-              variant="outline"
-              size="sm"
-            >
-              <Upload className="h-4 w-4 mr-1" />
-              {syncing ? 'Syncing...' : 'Sync Agents'}
-            </Button>
-            <Button
-              onClick={handleSyncTicketCounts}
-              disabled={syncingTickets}
-              variant="outline"
-              size="sm"
-            >
-              <TicketIcon className="h-4 w-4 mr-1" />
-              {syncingTickets ? 'Updating...' : 'Update Tickets'}
-            </Button>
-            <Button
-              onClick={async () => {
-                if (confirm('This will detect skills for ALL agents. This may take a while. Continue?')) {
-                  setDetectingSkills('all');
-                  setDetectionResult(null);
-                  try {
-                    const response = await fetch('/api/skills/detect', { 
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ runAll: true })
-                    });
-                    const result = await response.json();
-                    
-                    setDetectionResult({
-                      agentName: 'All Agents',
-                      skillsDetected: result.skillsDetected || 0,
-                      message: `Processed ${result.agentsProcessed || 0} agents, detected ${result.skillsDetected || 0} new skills`
-                    });
-                  } catch (error) {
-                    setDetectionResult({
-                      agentName: 'All Agents',
-                      error: true,
-                      message: 'Failed to detect skills for all agents'
-                    });
-                  } finally {
-                    setDetectingSkills(null);
-                  }
-                }
-              }}
-              disabled={detectingSkills === 'all'}
-              variant="outline"
-              size="sm"
-            >
-              <Brain className="h-4 w-4 mr-1" />
-              {detectingSkills === 'all' ? 'Detecting...' : 'Detect All Skills'}
-            </Button>
+            <div className="flex flex-col items-center">
+              <Button
+                onClick={handleSync}
+                disabled={syncing}
+                variant="outline"
+                size="sm"
+              >
+                {syncing ? (
+                  <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                ) : (
+                  <Upload className="h-4 w-4 mr-1" />
+                )}
+                {syncing ? 'Syncing...' : 'Sync Agents'}
+              </Button>
+              <span className="text-[10px] text-muted-foreground mt-1">
+                {formatSyncTimestamp(syncTimestamps.lastAgentSync)}
+              </span>
+            </div>
+            <div className="flex flex-col items-center">
+              <Button
+                onClick={handleSyncTicketCounts}
+                disabled={syncingTickets}
+                variant="outline"
+                size="sm"
+                title="Fetch latest tickets from Freshservice"
+              >
+                {syncingTickets ? (
+                  <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                ) : (
+                  <TicketIcon className="h-4 w-4 mr-1" />
+                )}
+                {syncingTickets ? 'Updating...' : 'Sync Tickets'}
+              </Button>
+              <span className="text-[10px] text-muted-foreground mt-1">
+                {formatSyncTimestamp(syncTimestamps.lastTicketSync)}
+              </span>
+            </div>
+            <div className="flex flex-col items-center">
+              <Button
+                onClick={handleRecalculateWorkloads}
+                disabled={syncingTickets}
+                variant="outline"
+                size="sm"
+                title="Recalculate weighted counts with current age weights"
+              >
+                {syncingTickets ? (
+                  <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                ) : (
+                  <Calculator className="h-4 w-4 mr-1" />
+                )}
+                Recalculate
+              </Button>
+              <span className="text-[10px] text-muted-foreground mt-1">
+                {formatSyncTimestamp(syncTimestamps.lastWorkloadRecalc)}
+              </span>
+            </div>
+            <div className="flex flex-col items-center">
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    disabled={detectingSkills === 'all'}
+                    variant="outline"
+                    size="sm"
+                  >
+                    {detectingSkills === 'all' ? (
+                      <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                    ) : (
+                      <Brain className="h-4 w-4 mr-1" />
+                    )}
+                    {detectingSkills === 'all' ? 'Detecting...' : 'Detect All Skills'}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Detect Skills for All Agents</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will analyze ticket history and detect skills for all available agents. 
+                      The process is optimized and should complete quickly.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={async () => {
+                        setDetectingSkills('all');
+                        setDetectionResult(null);
+                        try {
+                          const response = await fetch('/api/skills/detect', { 
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ runAll: true })
+                          });
+                          const result = await response.json();
+                          
+                          setDetectionResult({
+                            agentName: 'All Agents',
+                            skillsDetected: result.skillsDetected || 0,
+                            message: `Processed ${result.agentsProcessed || 0} agents, detected ${result.skillsDetected || 0} new skills`
+                          });
+                          await loadSyncTimestamps();
+                        } catch (error) {
+                          setDetectionResult({
+                            agentName: 'All Agents',
+                            error: true,
+                            message: 'Failed to detect skills for all agents'
+                          });
+                        } finally {
+                          setDetectingSkills(null);
+                        }
+                      }}
+                    >
+                      Start Detection
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+              <span className="text-[10px] text-muted-foreground mt-1">
+                {formatSyncTimestamp(syncTimestamps.lastSkillDetection)}
+              </span>
+            </div>
             <Button
               onClick={refreshAgents}
               disabled={loading}
@@ -394,6 +552,7 @@ export default function AgentsPage() {
                       selectedAgent={selectedAgent}
                       onSelectAgent={setSelectedAgent}
                       loading={loading}
+                      ticketAgeWeights={ticketAgeWeights}
                     />
                   </div>
                 </TabsContent>
@@ -409,6 +568,7 @@ export default function AgentsPage() {
                       selectedAgent={selectedAgent}
                       onSelectAgent={setSelectedAgent}
                       loading={loading}
+                      ticketAgeWeights={ticketAgeWeights}
                     />
                   </div>
                 </TabsContent>
@@ -507,7 +667,22 @@ export default function AgentsPage() {
                       </div>
                       <div className="text-center p-2 bg-orange-50 rounded">
                         <div className="text-xl font-bold text-orange-600">
-                          {selectedAgent.weightedTicketCount ? Number(selectedAgent.weightedTicketCount).toFixed(1) : selectedAgent.currentTicketCount}
+                          {(() => {
+                            // Calculate the weighted total if we have breakdown data
+                            if (selectedAgent.ticketWorkloadBreakdown) {
+                              const breakdown = selectedAgent.ticketWorkloadBreakdown;
+                              const weighted = 
+                                (breakdown.fresh || 0) * ticketAgeWeights.fresh +
+                                (breakdown.recent || 0) * ticketAgeWeights.recent +
+                                (breakdown.stale || 0) * ticketAgeWeights.stale +
+                                (breakdown.abandoned || 0) * ticketAgeWeights.old;
+                              return weighted.toFixed(1);
+                            }
+                            // Fall back to stored weighted count or raw count
+                            return selectedAgent.weightedTicketCount 
+                              ? Number(selectedAgent.weightedTicketCount).toFixed(1) 
+                              : '0.0';
+                          })()}
                         </div>
                         <div className="text-xs text-gray-600">Weighted</div>
                       </div>
@@ -520,7 +695,7 @@ export default function AgentsPage() {
                           <div className="flex justify-between items-center p-2 bg-red-50 rounded text-xs">
                             <span className="text-red-700 font-medium">Fresh (0-1d)</span>
                             <span className="font-mono text-red-600">
-                              {selectedAgent.ticketWorkloadBreakdown.fresh} × 2.0
+                              {selectedAgent.ticketWorkloadBreakdown.fresh} × {ticketAgeWeights.fresh}
                             </span>
                           </div>
                         )}
@@ -528,7 +703,7 @@ export default function AgentsPage() {
                           <div className="flex justify-between items-center p-2 bg-orange-50 rounded text-xs">
                             <span className="text-orange-700 font-medium">Recent (2-5d)</span>
                             <span className="font-mono text-orange-600">
-                              {selectedAgent.ticketWorkloadBreakdown.recent} × 1.2
+                              {selectedAgent.ticketWorkloadBreakdown.recent} × {ticketAgeWeights.recent}
                             </span>
                           </div>
                         )}
@@ -536,7 +711,7 @@ export default function AgentsPage() {
                           <div className="flex justify-between items-center p-2 bg-yellow-50 rounded text-xs">
                             <span className="text-yellow-700 font-medium">Stale (6-14d)</span>
                             <span className="font-mono text-yellow-600">
-                              {selectedAgent.ticketWorkloadBreakdown.stale} × 0.5
+                              {selectedAgent.ticketWorkloadBreakdown.stale} × {ticketAgeWeights.stale}
                             </span>
                           </div>
                         )}
@@ -544,7 +719,7 @@ export default function AgentsPage() {
                           <div className="flex justify-between items-center p-2 bg-gray-50 rounded text-xs">
                             <span className="text-gray-700 font-medium">Old (15+d)</span>
                             <span className="font-mono text-gray-600">
-                              {selectedAgent.ticketWorkloadBreakdown.abandoned} × 0.1
+                              {selectedAgent.ticketWorkloadBreakdown.abandoned} × {ticketAgeWeights.old}
                             </span>
                           </div>
                         )}
@@ -597,6 +772,9 @@ export default function AgentsPage() {
         onConfirm={confirmDialog.onConfirm}
         confirmText={confirmDialog.variant === 'destructive' ? 'Deactivate' : 'Confirm'}
       />
+      
+      {/* Real-time Sync Progress */}
+      <SyncProgressBar />
     </MainLayout>
   );
 }

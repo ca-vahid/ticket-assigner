@@ -38,7 +38,11 @@ import {
   Home,
   Briefcase,
   Plane,
-  RefreshCw
+  RefreshCw,
+  Loader2,
+  ChevronLeft,
+  ChevronRight,
+  MapPinned
 } from 'lucide-react'
 import { useAgents } from '@/hooks/useAgents'
 import { format, addDays, startOfWeek, isSameDay } from 'date-fns'
@@ -109,6 +113,7 @@ export default function EligibilityPage() {
   const [isSyncingLocations, setIsSyncingLocations] = useState(false)
   const [configLocation, setConfigLocation] = useState<any>(null)
   const [isConfigOpen, setIsConfigOpen] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
 
   // Fetch locations from API
   const { data: locations = [], refetch: refetchLocations } = useQuery({
@@ -128,76 +133,46 @@ export default function EligibilityPage() {
     }
   })
 
-  const [rules, setRules] = useState<EligibilityRule[]>([
-    {
-      id: 'availability_check',
-      name: 'Availability Check',
-      description: 'Only assign tickets to agents who are currently available',
-      enabled: true,
-      type: 'availability',
-      icon: UserCheck,
-      color: 'text-green-600',
-      config: {
-        checkPTO: true,
-        checkWorkingHours: true,
-        respectTimezones: true
-      }
-    },
-    {
-      id: 'workload_limit',
-      name: 'Workload Limit',
-      description: 'Prevent assignment if agent has too many active tickets',
-      enabled: true,
-      type: 'workload',
-      icon: Activity,
-      color: 'text-blue-600',
-      config: {
-        maxTickets: 10,
-        warningThreshold: 8
-      }
-    },
-    {
-      id: 'location_matching',
-      name: 'Location Matching',
-      description: 'Prefer agents in the same location as the ticket',
-      enabled: true,
-      type: 'location',
-      icon: MapPin,
-      color: 'text-orange-600',
-      config: {
-        strictMatching: false,
-        allowRemote: true,
-        preferredLocations: ['Vancouver', 'Toronto']
-      }
-    },
-    {
-      id: 'skill_requirement',
-      name: 'Skill Requirement',
-      description: 'Only assign to agents with required skills',
-      enabled: true,
-      type: 'skills',
-      icon: Shield,
-      color: 'text-purple-600',
-      config: {
-        minimumMatch: 80,
-        requireAllSkills: false
-      }
-    },
-    {
-      id: 'business_hours',
-      name: 'Business Hours',
-      description: 'Only assign during business hours',
-      enabled: true,
-      type: 'time',
-      icon: Clock,
-      color: 'text-yellow-600',
-      config: {
-        startHour: 8,
-        endHour: 18,
-        weekendsAllowed: false
-      }
+  const [rules, setRules] = useState<EligibilityRule[]>([])
+
+  // Icon and color mapping for rules
+  const iconMap: Record<string, any> = {
+    availability: UserCheck,
+    workload: Activity,
+    location: MapPin,
+    skills: Shield,
+    time: Clock
+  }
+
+  const colorMap: Record<string, string> = {
+    availability: 'text-green-600',
+    workload: 'text-blue-600',
+    location: 'text-orange-600',
+    skills: 'text-purple-600',
+    time: 'text-yellow-600'
+  }
+
+  // Fetch eligibility rules from backend
+  const { data: fetchedRules, refetch: refetchRules } = useQuery({
+    queryKey: ['eligibility-rules'],
+    queryFn: async () => {
+      const response = await apiService.getEligibilityRules()
+      return response.data
     }
-  ])
+  })
+
+  // Update local rules when fetched rules change
+  useEffect(() => {
+    if (fetchedRules) {
+      // Add icon and color to each rule based on type
+      const rulesWithIcons = fetchedRules.map((rule: any) => ({
+        ...rule,
+        icon: iconMap[rule.type] || UserCheck,
+        color: colorMap[rule.type] || 'text-gray-600'
+      }))
+      setRules(rulesWithIcons)
+    }
+  }, [fetchedRules])
 
   // Mock PTO data
   const [ptoData] = useState([
@@ -244,9 +219,20 @@ export default function EligibilityPage() {
   }
 
   const saveRules = async () => {
-    // API call to save rules
-    console.log('Saving rules:', rules)
-    setHasChanges(false)
+    setIsSaving(true)
+    try {
+      // Remove icon and color from rules before saving (they're UI-only)
+      const rulesToSave = rules.map(({ icon, color, ...rule }) => rule)
+      await apiService.updateEligibilityRules(rulesToSave)
+      await refetchRules() // Refresh from backend
+      setHasChanges(false)
+      // Show success toast or notification if you have one
+    } catch (error) {
+      console.error('Failed to save rules:', error)
+      // Show error toast or notification if you have one
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   // Generate calendar data
@@ -289,9 +275,18 @@ export default function EligibilityPage() {
                 Unsaved changes
               </Badge>
             )}
-            <Button size="sm" onClick={saveRules} disabled={!hasChanges}>
-              <Save className="h-4 w-4 mr-2" />
-              Save Changes
+            <Button size="sm" onClick={saveRules} disabled={!hasChanges || isSaving}>
+              {isSaving ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4 mr-2" />
+                  Save Changes
+                </>
+              )}
             </Button>
           </div>
         </div>
@@ -408,48 +403,120 @@ export default function EligibilityPage() {
                         {/* Location Matching Config */}
                         {rule.id === 'location_matching' && (
                           <div className="space-y-4">
-                            <div className="grid gap-4 md:grid-cols-2">
-                              <div className="flex items-center justify-between">
-                                <Label className="text-sm">Strict Matching</Label>
-                                <Switch
-                                  checked={rule.config.strictMatching}
-                                  onCheckedChange={(checked) => 
-                                    updateRuleConfig(rule.id, { strictMatching: checked })
-                                  }
-                                />
-                              </div>
-                              <div className="flex items-center justify-between">
-                                <Label className="text-sm">Allow Remote Agents</Label>
-                                <Switch
-                                  checked={rule.config.allowRemote}
-                                  onCheckedChange={(checked) => 
-                                    updateRuleConfig(rule.id, { allowRemote: checked })
-                                  }
-                                />
-                              </div>
-                            </div>
+                            {/* Location Mode Selector */}
                             <div className="space-y-2">
-                              <Label className="text-sm">Preferred Locations</Label>
-                              <div className="flex flex-wrap gap-2">
-                                {locations.map(location => (
-                                  <Badge
-                                    key={location.id}
-                                    variant={rule.config.preferredLocations?.includes(location.name) ? 'default' : 'outline'}
-                                    className="cursor-pointer"
-                                    onClick={() => {
-                                      const selectedLocations = rule.config.preferredLocations || []
-                                      updateRuleConfig(rule.id, {
-                                        preferredLocations: selectedLocations.includes(location.name)
-                                          ? selectedLocations.filter((l: string) => l !== location.name)
-                                          : [...selectedLocations, location.name]
-                                      })
-                                    }}
-                                  >
-                                    {location.name}
-                                  </Badge>
-                                ))}
-                              </div>
+                              <Label className="text-sm font-medium">Location Matching Mode</Label>
+                              <Select
+                                value={rule.config.mode || 'flexible'}
+                                onValueChange={(value) => 
+                                  updateRuleConfig(rule.id, { mode: value })
+                                }
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="disabled">
+                                    <div>
+                                      <div className="font-medium">Disabled</div>
+                                      <div className="text-xs text-muted-foreground">Location is not considered</div>
+                                    </div>
+                                  </SelectItem>
+                                  <SelectItem value="flexible">
+                                    <div>
+                                      <div className="font-medium">Flexible</div>
+                                      <div className="text-xs text-muted-foreground">Prefer same location but allow cross-location</div>
+                                    </div>
+                                  </SelectItem>
+                                  <SelectItem value="strict">
+                                    <div>
+                                      <div className="font-medium">Strict</div>
+                                      <div className="text-xs text-muted-foreground">Only exact location matches</div>
+                                    </div>
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
                             </div>
+                            
+                            {/* Additional Settings (only show if not disabled) */}
+                            {rule.config.mode !== 'disabled' && (
+                              <>
+                                <div className="grid gap-4 md:grid-cols-2">
+                                  <div className="flex items-center justify-between">
+                                    <div>
+                                      <Label className="text-sm">Allow Cross-Location</Label>
+                                      <p className="text-xs text-muted-foreground">Permit assignments across locations</p>
+                                    </div>
+                                    <Switch
+                                      checked={rule.config.allowCrossLocation ?? true}
+                                      onCheckedChange={(checked) => 
+                                        updateRuleConfig(rule.id, { allowCrossLocation: checked })
+                                      }
+                                    />
+                                  </div>
+                                  <div className="flex items-center justify-between">
+                                    <div>
+                                      <Label className="text-sm">Timezone Matching</Label>
+                                      <p className="text-xs text-muted-foreground">Consider timezone proximity</p>
+                                    </div>
+                                    <Switch
+                                      checked={rule.config.timezoneMatching ?? true}
+                                      onCheckedChange={(checked) => 
+                                        updateRuleConfig(rule.id, { timezoneMatching: checked })
+                                      }
+                                    />
+                                  </div>
+                                </div>
+                                <div className="grid gap-4 md:grid-cols-2">
+                                  <div className="flex items-center justify-between">
+                                    <div>
+                                      <Label className="text-sm">Allow Remote for Onsite</Label>
+                                      <p className="text-xs text-muted-foreground">Let remote agents handle onsite tickets</p>
+                                    </div>
+                                    <Switch
+                                      checked={rule.config.allowRemoteForOnsite ?? false}
+                                      onCheckedChange={(checked) => 
+                                        updateRuleConfig(rule.id, { allowRemoteForOnsite: checked })
+                                      }
+                                    />
+                                  </div>
+                                  <div className="flex items-center justify-between">
+                                    <div>
+                                      <Label className="text-sm">Strict Matching</Label>
+                                      <p className="text-xs text-muted-foreground">Only exact matches (overrides mode)</p>
+                                    </div>
+                                    <Switch
+                                      checked={rule.config.strictMatching ?? false}
+                                      onCheckedChange={(checked) => 
+                                        updateRuleConfig(rule.id, { strictMatching: checked })
+                                      }
+                                    />
+                                  </div>
+                                </div>
+                                
+                                {/* Location Impact Info */}
+                                <Alert>
+                                  <Info className="h-4 w-4" />
+                                  <AlertDescription>
+                                    <strong>Current Settings Impact:</strong>
+                                    <ul className="list-disc list-inside mt-2 space-y-1 text-sm">
+                                      {rule.config.mode === 'strict' && (
+                                        <li>Only agents in the exact same location will be eligible</li>
+                                      )}
+                                      {rule.config.allowCrossLocation && rule.config.mode !== 'strict' && (
+                                        <li>Agents from different locations can be assigned with lower priority</li>
+                                      )}
+                                      {rule.config.timezoneMatching && (
+                                        <li>Agents in the same timezone get higher scores</li>
+                                      )}
+                                      {rule.config.allowRemoteForOnsite && (
+                                        <li>Remote agents can handle tickets requiring onsite support</li>
+                                      )}
+                                    </ul>
+                                  </AlertDescription>
+                                </Alert>
+                              </>
+                            )}
                           </div>
                         )}
 

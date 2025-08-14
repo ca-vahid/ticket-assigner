@@ -67,6 +67,14 @@ class ApiService {
     return this.api.post('/api/admin/sync/agents')
   }
 
+  async recalculateWorkloads() {
+    return this.api.post('/api/admin/sync/recalculate-workloads')
+  }
+
+  async getSyncTimestamps() {
+    return this.api.get('/api/admin/sync/timestamps')
+  }
+
   // Scoring endpoints
   async getScoringWeights() {
     return this.api.get('/api/scoring/weights')
@@ -82,6 +90,33 @@ class ApiService {
 
   async updateTicketAgeWeights(weights: any) {
     return this.api.put('/api/scoring/ticket-age-weights', weights)
+  }
+
+  async getAvailableSkills() {
+    return this.api.get<string[]>('/api/scoring/available-skills')
+  }
+
+  async getAvailableLocations() {
+    return this.api.get<{ id: string; name: string; timezone?: string }[]>('/api/scoring/available-locations')
+  }
+
+  async testScoringScenario(scenario: {
+    skills: string[];
+    level: string;
+    locationId?: string;
+    isVIP: boolean;
+  }) {
+    return this.api.post('/api/scoring/test-scenario', scenario)
+  }
+
+  async testAssignmentScenario(scenario: {
+    skills: string[];
+    level: string;
+    locationId?: string;
+    isVIP: boolean;
+    categoryId?: string;
+  }) {
+    return this.api.post('/api/assignment/test-scenario', scenario)
   }
 
   // Eligibility endpoints
@@ -200,6 +235,15 @@ class ApiService {
 
   async clearOldAuditLogs(days: number) {
     return this.api.delete(`/api/audit/old?days=${days}`)
+  }
+
+  // Eligibility rules endpoints
+  async getEligibilityRules() {
+    return this.api.get('/api/settings/eligibility-rules')
+  }
+
+  async updateEligibilityRules(rules: any[]) {
+    return this.api.put('/api/settings/eligibility-rules', rules)
   }
 }
 

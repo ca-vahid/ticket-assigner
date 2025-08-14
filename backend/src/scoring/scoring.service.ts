@@ -17,7 +17,10 @@ export class ScoringService {
     private workloadCalculator: TicketWorkloadCalculator,
   ) {
     this.loadWeights();
+    this.loadWorkloadLimit();
   }
+
+  private workloadLimit: number = 5;
 
   async loadWeights(): Promise<void> {
     const weightsSetting = await this.settingsRepository.findOne({
@@ -33,6 +36,27 @@ export class ScoringService {
     };
   }
 
+  async loadWorkloadLimit(): Promise<void> {
+    // Get eligibility rules from settings
+    const rulesSettings = await this.settingsRepository.findOne({
+      where: { key: 'eligibility.rules' }
+    });
+
+    if (rulesSettings && rulesSettings.value) {
+      const rules = rulesSettings.value;
+      const workloadRule = rules.find((r: any) => r.id === 'workload_limit');
+      if (workloadRule && workloadRule.config && workloadRule.config.maxTickets) {
+        this.workloadLimit = workloadRule.config.maxTickets;
+        this.logger.log(`Loaded workload limit: ${this.workloadLimit}`);
+        return;
+      }
+    }
+
+    // Default fallback
+    this.workloadLimit = 5;
+    this.logger.log(`Using default workload limit: ${this.workloadLimit}`);
+  }
+
   async scoreAgent(
     agent: Agent,
     ticket: TicketContext
@@ -40,7 +64,7 @@ export class ScoringService {
     const skillScore = this.calculateSkillScore(agent, ticket);
     const levelScore = this.calculateLevelScore(agent, ticket);
     const loadScore = this.calculateLoadScore(agent);
-    const locationScore = this.calculateLocationScore(agent, ticket);
+    const locationScore = await this.calculateLocationScore(agent, ticket);
     const vipScore = this.calculateVipScore(agent, ticket);
 
     const totalScore = 
@@ -63,7 +87,7 @@ export class ScoringService {
       },
       eligibility: {
         isAvailable: agent.isAvailable,
-        hasCapacity: (agent.weightedTicketCount || agent.currentTicketCount) < agent.maxConcurrentTickets * 0.9,
+        hasCapacity: (agent.weightedTicketCount || agent.currentTicketCount) < this.workloadLimit * 0.9,
         meetsLocation: !ticket.requiresOnsite || (agent.location !== null),
         meetsLevel: this.meetsLevelRequirement(agent.level, ticket.requiredLevel)
       }
@@ -75,17 +99,65 @@ export class ScoringService {
       return 1.0;
     }
 
-    const agentSkills = new Set(agent.skills || []);
+    // Combine ALL skill sources for comprehensive skill checking
+    // Store as lowercase for case-insensitive comparison
+    const allAgentSkillsLower = new Set<string>();
+    const allAgentSkillsOriginal = new Set<string>();
+    
+    // Helper to add skills in both original and lowercase
+    const addSkill = (skill: string) => {
+      allAgentSkillsOriginal.add(skill);
+      allAgentSkillsLower.add(skill.toLowerCase());
+    };
+    
+    // Add main skills
+    if (agent.skills) {
+      agent.skills.forEach(skill => addSkill(skill));
+    }
+    
+    // Add category skills
+    if (agent.categorySkills) {
+      agent.categorySkills.forEach(skill => addSkill(skill));
+    }
+    
+    // Add auto-detected skills
+    if (agent.autoDetectedSkills) {
+      agent.autoDetectedSkills.forEach(skill => addSkill(skill));
+    }
+    
+    // Add skills from metadata
+    if (agent.skillMetadata) {
+      if (agent.skillMetadata.manual) {
+        agent.skillMetadata.manual.forEach(skill => addSkill(skill));
+      }
+      if (agent.skillMetadata.category) {
+        agent.skillMetadata.category.forEach(item => addSkill(item.skill));
+      }
+      if (agent.skillMetadata.group) {
+        agent.skillMetadata.group.forEach(skill => addSkill(skill));
+      }
+      if (agent.skillMetadata.pattern) {
+        agent.skillMetadata.pattern.forEach(item => addSkill(item.skill));
+      }
+      if (agent.skillMetadata.llm) {
+        agent.skillMetadata.llm.forEach(item => addSkill(item.skill));
+      }
+    }
+
+    // Case-insensitive matching
     const matchedSkills = ticket.requiredSkills.filter(skill => 
-      agentSkills.has(skill)
+      allAgentSkillsLower.has(skill.toLowerCase())
     );
 
     const overlap = matchedSkills.length / ticket.requiredSkills.length;
     
-    // Bonus for having additional relevant skills
-    const bonusSkills = agent.skills?.filter(skill => 
-      ticket.relatedSkills?.includes(skill)
-    ).length || 0;
+    // Bonus for having additional relevant skills (case-insensitive)
+    const bonusSkills = ticket.relatedSkills ? 
+      Array.from(allAgentSkillsOriginal).filter(skill => 
+        ticket.relatedSkills!.some(related => 
+          related.toLowerCase() === skill.toLowerCase()
+        )
+      ).length : 0;
     
     const bonus = Math.min(bonusSkills * 0.05, 0.2);
     
@@ -113,51 +185,76 @@ export class ScoringService {
   }
 
   private calculateLoadScore(agent: Agent): number {
-    if (agent.maxConcurrentTickets === 0) return 0;
+    // Use the workload limit from settings for consistent scoring
+    const maxTickets = this.workloadLimit;
+    if (maxTickets === 0) return 0;
     
     // Use weighted ticket count to prevent gaming the system
     // Agents with fresh tickets (today) have higher effective load
-    const weightedCount = agent.weightedTicketCount || agent.currentTicketCount;
+    const weightedCount = Number(agent.weightedTicketCount || agent.currentTicketCount || 0);
     
     // Calculate load percentage using weighted count
-    // We consider 80% of max as "full" when using weighted counts
-    // because fresh tickets count for more
-    const effectiveMax = agent.maxConcurrentTickets * 0.8;
-    const loadPercentage = weightedCount / effectiveMax;
+    // No adjustment factor - use raw percentage for clearer calculation
+    const loadPercentage = weightedCount / maxTickets;
     
-    // Inverse relationship - lower load = higher score
-    // Adjusted thresholds for weighted scoring
-    if (loadPercentage >= 1.2) return 0;    // Very overloaded
-    if (loadPercentage >= 1.0) return 0.1;   // Overloaded
-    if (loadPercentage >= 0.85) return 0.2;  // Nearly full
-    if (loadPercentage >= 0.7) return 0.4;   // High load
-    if (loadPercentage >= 0.5) return 0.6;   // Moderate load
-    if (loadPercentage >= 0.3) return 0.8;   // Light load
-    if (loadPercentage >= 0.15) return 0.9;  // Very light load
-    return 1.0;  // Minimal or no load
+    // Continuous inverse relationship - lower load = higher score
+    // Linear scoring for smooth gradient
+    if (loadPercentage >= 1.0) {
+      return 0; // Overloaded
+    }
+    
+    // Linear inverse scoring: score = 1 - loadPercentage
+    // This gives a smooth gradient where every ticket matters
+    const score = Math.max(0, 1 - loadPercentage);
+    
+    // Round to 2 decimal places for consistency
+    return Math.round(score * 100) / 100;
   }
 
-  private calculateLocationScore(agent: Agent, ticket: TicketContext): number {
-    // If ticket doesn't require onsite and agent is remote, perfect match
-    if (!ticket.requiresOnsite && agent.isRemote) {
-      return 1.0;
+  private async calculateLocationScore(agent: Agent, ticket: TicketContext): Promise<number> {
+    // Get location matching settings
+    const locationSettings = await this.getLocationMatchingSettings();
+    
+    // If location matching is disabled, everyone gets the same score
+    if (!locationSettings.enabled || locationSettings.config.mode === 'disabled') {
+      return 1.0; // Location doesn't matter
+    }
+    
+    // If no location requirement at all, everyone gets the same score
+    if (!ticket.requiresOnsite && !ticket.locationId) {
+      return 1.0; // No location preference, all agents equal
     }
 
-    // If ticket doesn't require onsite, location doesn't matter much
-    if (!ticket.requiresOnsite) {
-      return 0.9; // Slight preference for remote agents for remote tickets
+    // If ticket doesn't require onsite but has a location preference
+    if (!ticket.requiresOnsite && ticket.locationId) {
+      // In strict mode, only same location gets full score
+      if (locationSettings.config.mode === 'strict' || locationSettings.config.strictMatching) {
+        if (agent.location && agent.location.id === ticket.locationId) {
+          return 1.0;
+        }
+        return 0.5; // Different location penalty in strict mode
+      }
+      
+      // In flexible mode, prefer same location but allow others
+      if (agent.location && agent.location.id === ticket.locationId) {
+        return 1.0;
+      }
+      return 0.9; // Different location but still eligible
     }
 
     // Ticket requires onsite support
     if (ticket.requiresOnsite) {
-      // Agent must have a location for onsite work
+      // Agent must have a location for onsite work (unless remote is allowed)
       if (!agent.location) {
+        if (locationSettings.config.allowRemoteForOnsite && agent.isRemote) {
+          return 0.5; // Remote agent allowed but lower score
+        }
         return 0; // No location = can't do onsite
       }
 
       // Check if agent location supports onsite
       const supportsOnsite = agent.location.metadata?.supportTypes?.includes('onsite') ?? true;
-      if (!supportsOnsite) {
+      if (!supportsOnsite && !locationSettings.config.allowRemoteForOnsite) {
         return 0.1; // Location doesn't support onsite
       }
 
@@ -166,13 +263,18 @@ export class ScoringService {
         return 1.0;
       }
 
-      // Good match: same timezone (can potentially travel or provide urgent support)
-      if (ticket.timezone && agent.location.timezone === ticket.timezone) {
+      // If cross-location is not allowed in strict mode
+      if (locationSettings.config.mode === 'strict' && !locationSettings.config.allowCrossLocation) {
+        return 0.2; // Different location in strict mode
+      }
+
+      // Good match: same timezone (if timezone matching is enabled)
+      if (locationSettings.config.timezoneMatching && ticket.timezone && agent.location.timezone === ticket.timezone) {
         return 0.7;
       }
 
       // Calculate timezone difference for cross-timezone support
-      if (ticket.timezone && agent.location.timezone) {
+      if (locationSettings.config.timezoneMatching && ticket.timezone && agent.location.timezone) {
         const timezoneScore = this.calculateTimezoneScore(
           agent.location.timezone,
           ticket.timezone
@@ -180,12 +282,39 @@ export class ScoringService {
         return Math.max(0.2, timezoneScore * 0.5); // Min 0.2, max 0.5 for different locations
       }
 
-      // Different location, no timezone info
+      // Different location, no timezone matching or info
       return 0.3;
     }
 
     // Default neutral score
     return 0.5;
+  }
+
+  private async getLocationMatchingSettings(): Promise<any> {
+    // Get eligibility rules from settings
+    const rulesSettings = await this.settingsRepository.findOne({
+      where: { key: 'eligibility.rules' }
+    });
+
+    if (rulesSettings && rulesSettings.value) {
+      const rules = rulesSettings.value;
+      const locationRule = rules.find((r: any) => r.id === 'location_matching');
+      if (locationRule) {
+        return locationRule;
+      }
+    }
+
+    // Default settings
+    return {
+      enabled: true,
+      config: {
+        mode: 'flexible',
+        strictMatching: false,
+        allowCrossLocation: true,
+        allowRemoteForOnsite: false,
+        timezoneMatching: true
+      }
+    };
   }
 
   private calculateTimezoneScore(agentTz: string, ticketTz: string): number {
@@ -255,6 +384,9 @@ export class ScoringService {
     agents: Agent[],
     ticket: TicketContext
   ): Promise<ScoringResult[]> {
+    // Reload workload limit before scoring to ensure we have latest settings
+    await this.loadWorkloadLimit();
+    
     const scores = await Promise.all(
       agents.map(agent => this.scoreAgent(agent, ticket))
     );

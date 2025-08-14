@@ -69,6 +69,9 @@ export class AssignmentService {
     this.logger.log(`🎯 Starting assignment for ticket ${request.ticketId}`);
     this.logger.log(`📦 Request has ticketData: ${!!request.ticketData}`);
     
+    // Get the workload limit from settings for use throughout assignment
+    const workloadLimit = await this.getWorkloadLimitFromSettings();
+    
     try {
       // Use provided ticket data or fetch from Freshservice
       let ticket = request.ticketData;
@@ -457,5 +460,273 @@ export class AssignmentService {
   async reloadSettings(): Promise<void> {
     await this.loadSettings();
     this.logger.log('Assignment settings reloaded');
+  }
+
+  async testAssignmentScenario(scenario: {
+    skills: string[];
+    level: string;
+    locationId?: string;
+    isVIP: boolean;
+    categoryId?: string;
+  }): Promise<{
+    eligibleAgents: any[];
+    scoredAgents: any[];
+    topRecommendations: any[];
+    filters: any;
+    statistics: any;
+  }> {
+    this.logger.log(`🧪 Testing assignment scenario`);
+    
+    // Get the workload limit from settings
+    const workloadLimit = await this.getWorkloadLimitFromSettings();
+    
+    // Build a mock ticket context for testing
+    const ticketContext: TicketContext = {
+      id: 'test-ticket',
+      title: 'Test Scenario',
+      requiredSkills: scenario.skills,
+      requiredLevel: scenario.level as any,
+      locationId: scenario.locationId,
+      isVip: scenario.isVIP,
+      requiresOnsite: !!scenario.locationId,
+      relatedSkills: []
+    };
+
+    // Get category if provided
+    const category = scenario.categoryId 
+      ? await this.categoryRepository.findOne({ 
+          where: { id: scenario.categoryId } 
+        })
+      : null;
+
+    // Step 1: Get eligible agents using the same eligibility filters as real assignment
+    // NOTE: Don't filter by minLevel for test scenarios - we want to see ALL agents with the skills
+    // The scoring will handle level preferences
+    const eligibilityResult = await this.eligibilityService.getEligibleAgents({
+      ticketId: 'test-ticket',
+      categoryId: category?.id,
+      requiredSkills: scenario.skills && scenario.skills.length > 0 ? scenario.skills : undefined,
+      minLevel: undefined, // Don't restrict by level - let scoring handle it
+      requiresOnsite: !!scenario.locationId,
+      locationId: scenario.locationId,
+      checkPTO: false, // Don't check PTO for test scenarios
+      ptoAgentIds: [],
+      maxLoadPercentage: undefined, // Don't restrict by load for test scenarios
+      requireSpecialization: false,
+      isTestScenario: true // Flag this as a test scenario to bypass strict filters
+    });
+
+    this.logger.log(`Found ${eligibilityResult.eligibleAgents.length} eligible agents out of ${eligibilityResult.totalAgents} total`);
+
+    // Step 2: Score all eligible agents
+    const scoringResults = await this.scoringService.scoreMultipleAgents(
+      eligibilityResult.eligibleAgents,
+      ticketContext
+    );
+
+    // Step 3: For test scenarios, don't filter by minimum score - show all agents
+    // This lets us see the full picture of scoring
+    const qualifiedAgents = scoringResults; // Show all agents in test mode
+
+    // Step 4: For test scenarios, return ALL agents sorted by score, not just top 3
+    const topRecommendations = qualifiedAgents; // Return all instead of limiting
+
+    // Calculate statistics
+    const statistics = {
+      totalAgents: eligibilityResult.totalAgents,
+      eligibleAgents: eligibilityResult.eligibleAgents.length,
+      scoredAgents: scoringResults.length,
+      qualifiedAgents: qualifiedAgents.length,
+      averageScore: scoringResults.length > 0
+        ? scoringResults.reduce((sum, r) => sum + r.totalScore, 0) / scoringResults.length
+        : 0,
+      minScoreThreshold: this.minScoreThreshold,
+      scoreDistribution: this.calculateScoreDistribution(scoringResults),
+      excludedReasons: eligibilityResult.excludedReasons
+    };
+
+    // Format eligible agents with details
+    const eligibleAgentsDetails = eligibilityResult.eligibleAgents.map(agent => ({
+      id: agent.id,
+      name: `${agent.firstName} ${agent.lastName}`,
+      email: agent.email,
+      level: agent.level,
+      location: agent.location?.name || 'Remote',
+      skills: agent.skills || [],
+      currentWorkload: agent.currentTicketCount,
+      weightedWorkload: Number(agent.weightedTicketCount || 0),
+      isAvailable: agent.isAvailable
+    }));
+
+    // Format scored agents with details
+    const scoredAgentsDetails = scoringResults.map(result => {
+      const agent = eligibilityResult.eligibleAgents.find(a => a.id === result.agentId);
+      return {
+        agentId: result.agentId,
+        agentName: result.agentName,
+        email: agent?.email,
+        level: agent?.level,
+        location: agent?.location?.name || 'Remote',
+        skills: agent?.skills || [],
+        currentWorkload: agent?.currentTicketCount || 0,
+        weightedWorkload: Number(agent?.weightedTicketCount || 0),
+        totalScore: result.totalScore,
+        breakdown: result.breakdown,
+        eligibility: result.eligibility,
+        meetsThreshold: result.totalScore >= this.minScoreThreshold
+      };
+    });
+
+    // Format all recommendations with assignment reasoning
+    const allRecommendations = topRecommendations.map((result, index) => {
+      const agent = eligibilityResult.eligibleAgents.find(a => a.id === result.agentId);
+      return {
+        rank: index + 1,
+        agentId: result.agentId,
+        agentName: result.agentName,
+        email: agent?.email,
+        level: agent?.level,
+        location: agent?.location?.name || 'Remote',
+        skills: agent?.skills || [],
+        categorySkills: agent?.categorySkills || [],
+        autoDetectedSkills: agent?.autoDetectedSkills || [],
+        currentWorkload: agent?.currentTicketCount || 0,
+        maxConcurrentTickets: workloadLimit, // Use the workload limit from settings
+        weightedWorkload: Number(agent?.weightedTicketCount || 0),
+        workloadPercentage: agent ? ((agent.currentTicketCount / workloadLimit) * 100) : 0,
+        totalScore: result.totalScore,
+        breakdown: result.breakdown,
+        meetsMinThreshold: result.totalScore >= this.minScoreThreshold,
+        confidence: index === 0 ? this.calculateConfidence(topRecommendations.slice(0, 3)) : undefined,
+        assignmentReason: this.generateAssignmentReason(result),
+        wouldAutoAssign: index === 0 && this.autoAssignEnabled && result.totalScore >= this.minScoreThreshold
+      };
+    });
+
+    return {
+      eligibleAgents: eligibleAgentsDetails,
+      scoredAgents: scoredAgentsDetails,
+      topRecommendations: allRecommendations, // All agents sorted by score
+      filters: eligibilityResult.filters,
+      statistics: {
+        ...statistics,
+        minScoreThreshold: this.minScoreThreshold,
+        agentsMeetingThreshold: allRecommendations.filter(a => a.meetsMinThreshold).length
+      }
+    };
+  }
+
+  private calculateScoreDistribution(scores: any[]): any {
+    const distribution = [
+      { range: '0-20', count: 0 },
+      { range: '21-40', count: 0 },
+      { range: '41-60', count: 0 },
+      { range: '61-80', count: 0 },
+      { range: '81-100', count: 0 }
+    ];
+
+    scores.forEach(result => {
+      const score = Math.round(result.totalScore * 100);
+      if (score <= 20) distribution[0].count++;
+      else if (score <= 40) distribution[1].count++;
+      else if (score <= 60) distribution[2].count++;
+      else if (score <= 80) distribution[3].count++;
+      else distribution[4].count++;
+    });
+
+    return distribution;
+  }
+
+  private async getWorkloadLimitFromSettings(): Promise<number> {
+    // Get eligibility rules from settings
+    const rulesSettings = await this.settingsRepository.findOne({
+      where: { key: 'eligibility.rules' }
+    });
+
+    if (rulesSettings && rulesSettings.value) {
+      const rules = rulesSettings.value;
+      const workloadRule = rules.find((r: any) => r.id === 'workload_limit');
+      if (workloadRule && workloadRule.config && workloadRule.config.maxTickets) {
+        this.logger.log(`📊 Using workload limit from settings: ${workloadRule.config.maxTickets}`);
+        return workloadRule.config.maxTickets;
+      }
+    }
+
+    // Default fallback
+    this.logger.log(`📊 Using default workload limit: 5`);
+    return 5;
+  }
+
+  async debugAgentSkills(): Promise<any> {
+    // Get ALL agents, not just available ones, to see the full picture
+    const allAgents = await this.agentRepository.find();
+    
+    const agentSkillsInfo = allAgents.map(agent => {
+      // Collect all skills from all sources
+      const allSkills = new Set<string>();
+      
+      if (agent.skills) {
+        agent.skills.forEach(s => allSkills.add(s));
+      }
+      if (agent.categorySkills) {
+        agent.categorySkills.forEach(s => allSkills.add(s));
+      }
+      if (agent.autoDetectedSkills) {
+        agent.autoDetectedSkills.forEach(s => allSkills.add(s));
+      }
+      if (agent.skillMetadata) {
+        if (agent.skillMetadata.manual) {
+          agent.skillMetadata.manual.forEach(s => allSkills.add(s));
+        }
+        if (agent.skillMetadata.category) {
+          agent.skillMetadata.category.forEach(item => allSkills.add(item.skill));
+        }
+      }
+      
+      const hasOffboarding = Array.from(allSkills).some(s => 
+        s.toLowerCase().includes('offboard')
+      );
+      
+      return {
+        name: `${agent.firstName} ${agent.lastName}`,
+        email: agent.email,
+        level: agent.level,
+        isAvailable: agent.isAvailable,
+        currentTicketCount: agent.currentTicketCount,
+        maxConcurrentTickets: agent.maxConcurrentTickets,
+        skills: agent.skills || [],
+        categorySkills: agent.categorySkills || [],
+        autoDetectedSkills: agent.autoDetectedSkills || [],
+        skillMetadata: agent.skillMetadata || {},
+        allSkills: Array.from(allSkills),
+        hasOffboarding,
+        capacityFull: agent.currentTicketCount >= agent.maxConcurrentTickets
+      };
+    });
+
+    // Find agents with offboarding skills
+    const withOffboarding = agentSkillsInfo.filter(a => a.hasOffboarding);
+    const availableWithOffboarding = withOffboarding.filter(a => a.isAvailable);
+    const withCapacityAndOffboarding = availableWithOffboarding.filter(a => !a.capacityFull);
+
+    return {
+      totalAgents: allAgents.length,
+      availableAgents: agentSkillsInfo.filter(a => a.isAvailable).length,
+      agentsWithOffboarding: withOffboarding.length,
+      availableAgentsWithOffboarding: availableWithOffboarding.length,
+      agentsWithCapacityAndOffboarding: withCapacityAndOffboarding.length,
+      sampleAgentsWithOffboarding: withOffboarding.slice(0, 5),
+      blockedAgentsWithOffboarding: withOffboarding
+        .filter(a => !a.isAvailable || a.capacityFull)
+        .map(a => ({
+          name: a.name,
+          email: a.email,
+          isAvailable: a.isAvailable,
+          currentTickets: a.currentTicketCount,
+          maxTickets: a.maxConcurrentTickets,
+          blockedReason: !a.isAvailable ? 'Not available' : 'At capacity'
+        })),
+      allAgentSkills: agentSkillsInfo
+    };
   }
 }

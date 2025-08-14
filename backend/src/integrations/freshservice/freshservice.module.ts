@@ -5,6 +5,7 @@ import { FreshserviceService } from './freshservice.service';
 import { FreshserviceController } from './freshservice.controller';
 import { Category } from '../../database/entities/category.entity';
 import { AssignmentModule } from '../../assignment/assignment.module';
+import { SyncProgressService } from '../../sync/sync-progress.service';
 
 @Module({
   imports: [
@@ -13,7 +14,7 @@ import { AssignmentModule } from '../../assignment/assignment.module';
     forwardRef(() => AssignmentModule) // Use forwardRef to avoid circular dependency
   ],
   controllers: [FreshserviceController],
-  providers: [FreshserviceService],
+  providers: [FreshserviceService, SyncProgressService],
   exports: [FreshserviceService]
 })
 export class FreshserviceModule {}

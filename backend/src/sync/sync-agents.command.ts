@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Agent } from '../database/entities/agent.entity';
 import { Location } from '../database/entities/location.entity';
 import { FreshserviceService } from '../integrations/freshservice/freshservice.service';
+import { SyncProgressService } from './sync-progress.service';
 
 @Injectable()
 export class SyncAgentsCommand {
@@ -15,6 +16,7 @@ export class SyncAgentsCommand {
     @InjectRepository(Location)
     private locationRepository: Repository<Location>,
     private freshserviceService: FreshserviceService,
+    private syncProgressService: SyncProgressService,
   ) {}
 
   async execute(options: { workspaceId?: number } = {}): Promise<{ synced: number; skipped: number }> {
@@ -26,6 +28,10 @@ export class SyncAgentsCommand {
     let skippedCount = 0;
 
     try {
+      // Emit start event
+      this.syncProgressService.startSync('agents', 100);
+      this.syncProgressService.updateProgress('agents', 0, 100, 'Fetching agents from Freshservice...');
+      
       // Fetch all agents from Freshservice
       const freshserviceAgents = await this.freshserviceService.getAllAgents();
       this.logger.log(`📥 Fetched ${freshserviceAgents.length} agents from Freshservice`);
@@ -37,9 +43,23 @@ export class SyncAgentsCommand {
       });
 
       this.logger.log(`🎯 Found ${itAgents.length} agents in IT workspace (ID: ${IT_WORKSPACE_ID})`);
+      
+      // Update progress with actual count
+      this.syncProgressService.updateProgress('agents', 0, itAgents.length, `Processing ${itAgents.length} agents...`);
 
       // Sync each IT agent
+      let processedCount = 0;
       for (const fsAgent of itAgents) {
+        processedCount++;
+        
+        // Emit progress
+        this.syncProgressService.updateProgress(
+          'agents',
+          processedCount,
+          itAgents.length,
+          `Processing ${fsAgent.first_name} ${fsAgent.last_name}...`
+        );
+        
         if (!fsAgent.active) {
           this.logger.debug(`Skipping inactive agent: ${fsAgent.first_name} ${fsAgent.last_name}`);
           skippedCount++;
@@ -108,9 +128,18 @@ export class SyncAgentsCommand {
       }
 
       this.logger.log(`✅ Agent sync completed: ${syncedCount} synced, ${skippedCount} skipped`);
+      
+      // Emit completion
+      this.syncProgressService.completeSync(
+        'agents',
+        `Completed: ${syncedCount} agents synced, ${skippedCount} skipped`,
+        { synced: syncedCount, skipped: skippedCount }
+      );
+      
       return { synced: syncedCount, skipped: skippedCount };
     } catch (error) {
       this.logger.error('❌ Agent sync failed:', error);
+      this.syncProgressService.errorSync('agents', 'Agent sync failed', { error: error.message });
       throw error;
     }
   }

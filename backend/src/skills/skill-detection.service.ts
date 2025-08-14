@@ -5,7 +5,9 @@ import { Agent } from '../database/entities/agent.entity';
 import { DetectedSkill, SkillType, DetectedSkillStatus } from '../database/entities/detected-skill.entity';
 import { SkillDetectionConfig, SkillDetectionMethod } from '../database/entities/skill-detection-config.entity';
 import { SkillAuditLog, SkillAuditAction } from '../database/entities/skill-audit-log.entity';
+import { Settings } from '../database/entities/settings.entity';
 import { FreshserviceService } from '../integrations/freshservice/freshservice.service';
+import { SyncProgressService } from '../sync/sync-progress.service';
 
 interface SkillDetectionResult {
   agentId: string;
@@ -31,7 +33,10 @@ export class SkillDetectionService {
     private configRepository: Repository<SkillDetectionConfig>,
     @InjectRepository(SkillAuditLog)
     private auditLogRepository: Repository<SkillAuditLog>,
+    @InjectRepository(Settings)
+    private settingsRepository: Repository<Settings>,
     private freshserviceService: FreshserviceService,
+    private syncProgressService: SyncProgressService,
   ) {}
 
   /**
@@ -68,9 +73,19 @@ export class SkillDetectionService {
       }
 
       this.logger.log(`Processing ${agents.length} agents with ${configs.length} detection methods`);
-
-      // Process each agent
-      for (const agent of agents) {
+      
+      // Check if single agent or bulk detection
+      if (agentId && agents.length === 1) {
+        // SINGLE AGENT DETECTION - use individual method
+        this.syncProgressService.startSync('skills', 1);
+        this.syncProgressService.updateProgress(
+          'skills',
+          0,
+          1,
+          `Detecting skills for ${agents[0].firstName} ${agents[0].lastName}...`
+        );
+        
+        const agent = agents[0];
         try {
           const results: SkillDetectionResult[] = [];
 
@@ -109,6 +124,14 @@ export class SkillDetectionService {
 
           agentsProcessed++;
           
+          // Update progress for single agent
+          this.syncProgressService.updateProgress(
+            'skills',
+            1,
+            1,
+            `Completed skill detection for ${agent.firstName} ${agent.lastName}`
+          );
+          
           // Update agent's last skill detection timestamp
           agent.lastSkillDetectionAt = new Date();
           await this.agentRepository.save(agent);
@@ -118,6 +141,16 @@ export class SkillDetectionService {
           this.logger.error(errorMsg);
           errors.push(errorMsg);
         }
+      } else if (!agentId && agents.length > 0) {
+        // BULK DETECTION - use optimized method
+        this.logger.log('🚀 Using optimized bulk detection for all agents');
+        this.syncProgressService.startSync('skills', agents.length + 1); // +1 for ticket fetching
+        
+        const bulkResults = await this.runBulkSkillDetection(agents, configs);
+        
+        skillsDetected = bulkResults.skillsDetected;
+        agentsProcessed = bulkResults.agentsProcessed;
+        errors.push(...bulkResults.errors);
       }
 
       // Log audit entry for bulk detection
@@ -141,6 +174,9 @@ export class SkillDetectionService {
 
       this.logger.log(`✅ Skill detection complete: ${agentsProcessed} agents, ${skillsDetected} skills detected/re-added`);
 
+      // Update last skill detection timestamp
+      await this.updateSkillDetectionTimestamp();
+
       // Check for pending skills after detection
       let pendingSkillsCount = 0;
       let reAddedCount = skillsDetected; // Skills that were re-added are included in skillsDetected
@@ -153,6 +189,27 @@ export class SkillDetectionService {
           }
         });
         pendingSkillsCount = pendingSkills;
+        
+        // Emit completion for single agent
+        this.syncProgressService.completeSync(
+          'skills',
+          `Skill detection completed for ${agents[0].firstName} ${agents[0].lastName}`,
+          {
+            skillsDetected,
+            pendingSkillsCount
+          }
+        );
+      } else if (!agentId) {
+        // Emit completion for all agents
+        this.syncProgressService.completeSync(
+          'skills',
+          `Skill detection completed for all agents`,
+          {
+            agentsProcessed,
+            skillsDetected,
+            errors: errors.length
+          }
+        );
       }
 
       return {
@@ -166,12 +223,228 @@ export class SkillDetectionService {
 
     } catch (error) {
       this.logger.error('Skill detection failed:', error);
+      
+      // Emit error event
+      this.syncProgressService.errorSync(
+        'skills',
+        `Skill detection failed: ${error.message}`
+      );
+      
       return {
         success: false,
         agentsProcessed,
         skillsDetected,
         errors: [...errors, error.message]
       };
+    }
+  }
+
+  /**
+   * Optimized bulk detection for all agents
+   * Fetches all tickets once and processes all agents together
+   */
+  private async runBulkSkillDetection(
+    agents: Agent[],
+    configs: SkillDetectionConfig[]
+  ): Promise<{
+    agentsProcessed: number;
+    skillsDetected: number;
+    errors: string[];
+  }> {
+    const errors: string[] = [];
+    let skillsDetected = 0;
+    let agentsProcessed = 0;
+
+    this.syncProgressService.updateProgress(
+      'skills',
+      0,
+      agents.length + 1,
+      `Fetching all resolved tickets from Freshservice...`
+    );
+
+    // Step 1: Fetch ALL resolved/closed tickets once (not per agent)
+    this.logger.log('📦 Fetching all resolved/closed tickets in bulk...');
+    const allTickets = await this.freshserviceService.getTickets({
+      status: [4, 5], // Resolved and Closed
+      per_page: 100
+      // Note: custom_fields are included by default in ticket responses
+    });
+    
+    this.logger.log(`✅ Fetched ${allTickets.length} total tickets from Freshservice`);
+    
+    this.syncProgressService.updateProgress(
+      'skills',
+      1,
+      agents.length + 1,
+      `Analyzing ${allTickets.length} tickets for ${agents.length} agents...`
+    );
+
+    // Step 2: Group tickets by responder_id for quick lookup
+    const ticketsByAgent = new Map<string, any[]>();
+    for (const ticket of allTickets) {
+      const responderId = ticket.responder_id?.toString();
+      if (responderId) {
+        if (!ticketsByAgent.has(responderId)) {
+          ticketsByAgent.set(responderId, []);
+        }
+        ticketsByAgent.get(responderId)!.push(ticket);
+      }
+    }
+    
+    this.logger.log(`📊 Tickets grouped by agent: ${ticketsByAgent.size} agents have tickets`);
+
+    // Step 3: Process each agent using the pre-fetched tickets
+    for (let i = 0; i < agents.length; i++) {
+      const agent = agents[i];
+      
+      this.syncProgressService.updateProgress(
+        'skills',
+        i + 2, // +2 because we already did ticket fetching
+        agents.length + 1,
+        `Processing ${agent.firstName} ${agent.lastName} (${i + 1}/${agents.length})...`
+      );
+
+      try {
+        const agentTickets = ticketsByAgent.get(agent.freshserviceId) || [];
+        this.logger.log(`Processing ${agent.email}: ${agentTickets.length} tickets`);
+
+        const results: SkillDetectionResult[] = [];
+
+        // Run each enabled detection method
+        for (const config of configs) {
+          switch (config.method) {
+            case SkillDetectionMethod.CATEGORY_BASED:
+              // Use the pre-fetched tickets for this agent
+              const categorySkills = await this.detectCategoryBasedSkillsFromTickets(
+                agent, 
+                config, 
+                agentTickets
+              );
+              if (categorySkills) results.push(categorySkills);
+              break;
+
+            case SkillDetectionMethod.GROUP_MEMBERSHIP:
+              const groupSkills = await this.detectGroupBasedSkills(agent, config);
+              if (groupSkills) results.push(groupSkills);
+              break;
+
+            case SkillDetectionMethod.RESOLUTION_PATTERNS:
+              // To be implemented
+              break;
+
+            case SkillDetectionMethod.TEXT_ANALYSIS_LLM:
+              // To be implemented
+              break;
+          }
+        }
+
+        // Save detected skills
+        for (const result of results) {
+          for (const skill of result.detectedSkills) {
+            const wasCreatedOrUpdated = await this.saveDetectedSkill(agent, skill);
+            if (wasCreatedOrUpdated) {
+              skillsDetected++;
+            }
+          }
+        }
+
+        agentsProcessed++;
+        
+        // Update agent's last skill detection timestamp
+        agent.lastSkillDetectionAt = new Date();
+        await this.agentRepository.save(agent);
+        
+      } catch (error) {
+        const errorMsg = `Error processing agent ${agent.email}: ${error.message}`;
+        this.logger.error(errorMsg);
+        errors.push(errorMsg);
+      }
+    }
+
+    this.logger.log(`✅ Bulk detection complete: ${agentsProcessed}/${agents.length} agents, ${skillsDetected} skills`);
+
+    return {
+      agentsProcessed,
+      skillsDetected,
+      errors
+    };
+  }
+
+  /**
+   * Detect category-based skills from pre-fetched tickets
+   */
+  private async detectCategoryBasedSkillsFromTickets(
+    agent: Agent,
+    config: SkillDetectionConfig,
+    tickets: any[]
+  ): Promise<SkillDetectionResult | null> {
+    try {
+      const settings = config.settings || {};
+      const minimumTickets = settings.minimumTickets || 5;
+      const includeComplexity = settings.includeComplexity !== false;
+
+      this.logger.debug(`Analyzing ${tickets.length} pre-fetched tickets for ${agent.email}`);
+      
+      // Group tickets by category and count
+      const categoryMap = new Map<string, { count: number; complexity: number }>();
+      
+      for (const ticket of tickets) {
+        // Use the custom 'security' dropdown field as the primary category source
+        const category = ticket.custom_fields?.security || 
+                        ticket.custom_fields?.cf_security ||
+                        null;
+        
+        if (!category) {
+          continue;
+        }
+
+        const current = categoryMap.get(category) || { count: 0, complexity: 0 };
+        current.count++;
+        
+        // Add complexity score based on priority
+        if (includeComplexity) {
+          const priorityScore = this.getPriorityScore(ticket.priority);
+          current.complexity += priorityScore;
+        }
+        
+        categoryMap.set(category, current);
+      }
+
+      // Filter categories that meet the threshold
+      const detectedSkills = [];
+      
+      for (const [category, stats] of categoryMap.entries()) {
+        if (stats.count >= minimumTickets) {
+          const confidence = Math.min(stats.count / (minimumTickets * 2), 1);
+          const skillName = this.categoryToSkillName(category);
+          
+          detectedSkills.push({
+            skillName,
+            type: SkillType.CATEGORY,
+            method: SkillDetectionMethod.CATEGORY_BASED,
+            confidence,
+            metadata: {
+              ticketCount: stats.count,
+              categories: [category],
+              complexityScore: stats.complexity / stats.count,
+              dateRange: {
+                from: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
+                to: new Date()
+              }
+            }
+          });
+        }
+      }
+
+      if (detectedSkills.length > 0) {
+        this.logger.log(`🎯 Found ${detectedSkills.length} category-based skills for ${agent.email}`);
+        return { agentId: agent.id, detectedSkills };
+      }
+
+      return null;
+    } catch (error) {
+      this.logger.error(`Failed to detect category skills for ${agent.email}:`, error);
+      return null;
     }
   }
 
@@ -192,7 +465,7 @@ export class SkillDetectionService {
       this.logger.log(`Fetching tickets for agent ${agent.email} (FreshserviceID: ${agent.freshserviceId})`);
 
       // Fetch agent's ticket history from Freshservice
-      const tickets = await this.fetchAgentTicketHistory(agent.freshserviceId, lookbackTickets);
+      const tickets = await this.fetchAgentTicketHistory(agent, lookbackTickets);
       
       this.logger.log(`Found ${tickets.length} tickets for ${agent.email}`);
       
@@ -336,19 +609,19 @@ export class SkillDetectionService {
   /**
    * Fetch agent's ticket history
    */
-  private async fetchAgentTicketHistory(freshserviceId: string, limit: number = 500): Promise<any[]> {
+  private async fetchAgentTicketHistory(agent: Agent, limit: number = 500): Promise<any[]> {
     try {
-      this.logger.log(`Fetching tickets from Freshservice for agent ID: ${freshserviceId}`);
+      this.logger.log(`Fetching tickets from Freshservice for agent ID: ${agent.freshserviceId}`);
       
-      const tickets = await this.freshserviceService.getAgentTickets(freshserviceId, {
+      const tickets = await this.freshserviceService.getAgentTickets(agent.freshserviceId, {
         status: [4, 5], // Resolved and Closed  
         limit
       });
       
-      this.logger.log(`Freshservice returned ${tickets.length} tickets for agent ${freshserviceId}`);
+      this.logger.log(`Freshservice returned ${tickets.length} tickets for agent ${agent.freshserviceId}`);
       return tickets;
     } catch (error) {
-      this.logger.error(`Failed to fetch ticket history for agent ${freshserviceId}:`, error);
+      this.logger.error(`Failed to fetch ticket history for agent ${agent.freshserviceId}:`, error);
       return [];
     }
   }
@@ -582,5 +855,27 @@ export class SkillDetectionService {
   private getPriorityScore(priority: number): number {
     const scores = { 1: 1, 2: 2, 3: 3, 4: 4 }; // Low to Urgent
     return scores[priority] || 1;
+  }
+
+  /**
+   * Update last skill detection timestamp
+   */
+  private async updateSkillDetectionTimestamp(): Promise<void> {
+    let setting = await this.settingsRepository.findOne({ 
+      where: { key: 'sync.lastSkillDetection' } 
+    });
+    
+    if (!setting) {
+      setting = this.settingsRepository.create({
+        key: 'sync.lastSkillDetection',
+        value: new Date().toISOString(),
+        category: 'sync',
+        description: 'Last time skills were detected for all agents'
+      });
+    } else {
+      setting.value = new Date().toISOString();
+    }
+    
+    await this.settingsRepository.save(setting);
   }
 }

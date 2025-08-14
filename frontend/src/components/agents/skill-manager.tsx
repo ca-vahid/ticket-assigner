@@ -9,6 +9,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
 import { X, Plus, GripVertical, Sparkles, Search, Tag, Brain, CheckCircle, XCircle, Loader2, TicketIcon, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useSyncProgress } from '@/hooks/useSyncProgress';
 
 interface Agent {
   id: string;
@@ -78,6 +79,7 @@ const SKILL_CATEGORIES = {
 
 export function SkillManager({ agent, onSkillsUpdate, onDetectSkills }: SkillManagerProps) {
   const queryClient = useQueryClient();
+  const { progress } = useSyncProgress();
   const [agentSkills, setAgentSkills] = useState<string[]>(agent.skills || []);
   const [freshserviceCategories, setFreshserviceCategories] = useState<string[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(false);
@@ -121,6 +123,39 @@ export function SkillManager({ agent, onSkillsUpdate, onDetectSkills }: SkillMan
   const [detecting, setDetecting] = useState(false);
   const [detectionResult, setDetectionResult] = useState<{ success?: boolean; message?: string } | null>(null);
   const dragCounter = useRef(0);
+  
+  // Track if we're detecting skills for this specific agent
+  const isDetectingForThisAgent = progress?.type === 'skills' && 
+    (progress?.status === 'progress' || progress?.status === 'started') && 
+    progress?.message?.includes(agent.firstName) && 
+    progress?.message?.includes(agent.lastName);
+  
+  // Handle completion of skill detection
+  useEffect(() => {
+    if (progress?.type === 'skills' && 
+        progress?.status === 'completed' &&
+        progress?.message?.includes(agent.firstName) && 
+        progress?.message?.includes(agent.lastName)) {
+      setDetecting(false);
+      setDetectionResult({
+        success: true,
+        message: `Skill detection completed. ${progress.details?.skillsDetected || 0} skills detected, ${progress.details?.pendingSkillsCount || 0} pending review.`
+      });
+      // Refresh agent data
+      queryClient.invalidateQueries({ queryKey: ['agents'] });
+    }
+    
+    if (progress?.type === 'skills' && 
+        progress?.status === 'error' &&
+        progress?.message?.includes(agent.firstName) && 
+        progress?.message?.includes(agent.lastName)) {
+      setDetecting(false);
+      setDetectionResult({
+        success: false,
+        message: progress.message || 'Skill detection failed.'
+      });
+    }
+  }, [progress, agent.firstName, agent.lastName, queryClient]);
 
   const handleDragStart = (skill: string, index?: number) => {
     setDraggedSkill(skill);
@@ -271,21 +306,41 @@ export function SkillManager({ agent, onSkillsUpdate, onDetectSkills }: SkillMan
       </div>
 
       {/* Detection Progress */}
-      {detecting && (
+      {(detecting || isDetectingForThisAgent) && (
         <Alert className="mb-4 border-blue-500 bg-blue-50">
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
               <AlertDescription className="text-xs font-medium">
-                Detecting skills for {agent.firstName} {agent.lastName}...
+                {progress?.message || `Detecting skills for ${agent.firstName} ${agent.lastName}...`}
               </AlertDescription>
             </div>
-            <div className="space-y-1">
-              <Progress value={33} className="h-1" />
-              <p className="text-xs text-muted-foreground">
-                Fetching ticket history and analyzing categories...
-              </p>
-            </div>
+            {progress?.message?.includes('Fetching') && (
+              <div className="space-y-1">
+                <div className="h-1 bg-secondary rounded-full overflow-hidden">
+                  <div className="h-full bg-blue-500 rounded-full animate-pulse" style={{ width: '100%' }} />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Fetching and analyzing ticket history...
+                </p>
+              </div>
+            )}
+            {progress?.message?.includes('Analyzing') && (
+              <div className="space-y-1">
+                <Progress value={50} className="h-1" />
+                <p className="text-xs text-muted-foreground">
+                  Analyzing ticket categories and patterns...
+                </p>
+              </div>
+            )}
+            {progress?.message?.includes('Completed') && (
+              <div className="space-y-1">
+                <Progress value={100} className="h-1" />
+                <p className="text-xs text-muted-foreground">
+                  Detection complete!
+                </p>
+              </div>
+            )}
           </div>
         </Alert>
       )}
