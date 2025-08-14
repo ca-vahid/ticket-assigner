@@ -55,39 +55,36 @@ export class EligibilityService {
     
     // Apply location filter based on settings
     if (locationSettings.enabled && locationSettings.config.mode !== 'disabled') {
-      if (context.locationId || context.requiresOnsite) {
-        // If specific location required
+      // Only apply hard filters for onsite requirements or strict mode
+      if (context.requiresOnsite) {
+        // If onsite is required, check if remote agents are allowed
+        if (!locationSettings.config.allowRemoteForOnsite) {
+          query = query.andWhere('agent.is_remote = false');
+          query = query.andWhere(`location.metadata->>'supportTypes' LIKE '%onsite%'`);
+        }
+        
+        // Apply location filter for onsite
         if (context.locationId) {
-          // Check mode and apply appropriate filter
           if (locationSettings.config.mode === 'strict' || locationSettings.config.strictMatching) {
             // Strict location matching - exact match only
             query = query.andWhere('agent.location_id = :locationId', { 
               locationId: context.locationId 
             });
-          } else if (locationSettings.config.mode === 'flexible' || locationSettings.config.allowCrossLocation) {
-            // Flexible matching - include remote agents and timezone matches
-            if (locationSettings.config.timezoneMatching) {
-              query = query.andWhere(`(
-                agent.location_id = :locationId 
-                OR agent.is_remote = true 
-                OR location.timezone = (SELECT timezone FROM locations WHERE id = :locationId)
-              )`, { locationId: context.locationId });
-            } else {
-              // Without timezone matching
-              query = query.andWhere(`(
-                agent.location_id = :locationId 
-                OR agent.is_remote = true
-              )`, { locationId: context.locationId });
-            }
+          } else if (!locationSettings.config.allowCrossLocation) {
+            // If cross-location is not allowed, filter to same location
+            query = query.andWhere('agent.location_id = :locationId', { 
+              locationId: context.locationId 
+            });
           }
+          // Otherwise in flexible mode with cross-location allowed, don't filter
         }
-        
-        // If onsite is required, check if remote agents are allowed
-        if (context.requiresOnsite && !locationSettings.config.allowRemoteForOnsite) {
-          query = query.andWhere('agent.is_remote = false');
-          query = query.andWhere(`location.metadata->>'supportTypes' LIKE '%onsite%'`);
-        }
+      } else if (context.locationId && (locationSettings.config.mode === 'strict' || locationSettings.config.strictMatching)) {
+        // Only apply location filter in strict mode when no onsite requirement
+        query = query.andWhere('agent.location_id = :locationId', { 
+          locationId: context.locationId 
+        });
       }
+      // In flexible mode with just location preference (no onsite), don't filter - let scoring handle it
     }
 
     // Apply timezone filter for urgent tickets

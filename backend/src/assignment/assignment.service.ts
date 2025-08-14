@@ -488,7 +488,7 @@ export class AssignmentService {
       requiredLevel: scenario.level as any,
       locationId: scenario.locationId,
       isVip: scenario.isVIP,
-      requiresOnsite: !!scenario.locationId,
+      requiresOnsite: false,  // Don't assume onsite just because location is selected
       relatedSkills: []
     };
 
@@ -507,7 +507,7 @@ export class AssignmentService {
       categoryId: category?.id,
       requiredSkills: scenario.skills && scenario.skills.length > 0 ? scenario.skills : undefined,
       minLevel: undefined, // Don't restrict by level - let scoring handle it
-      requiresOnsite: !!scenario.locationId,
+      requiresOnsite: false,  // Don't assume onsite just because location is selected
       locationId: scenario.locationId,
       checkPTO: false, // Don't check PTO for test scenarios
       ptoAgentIds: [],

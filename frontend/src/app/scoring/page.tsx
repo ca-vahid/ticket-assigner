@@ -406,10 +406,6 @@ export default function ScoringPage() {
               <BarChart3 className="h-4 w-4 mr-2" />
               Analytics
             </TabsTrigger>
-            <TabsTrigger value="history">
-              <History className="h-4 w-4 mr-2" />
-              Scoring History
-            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="weights" className="space-y-6">
@@ -1130,44 +1126,6 @@ export default function ScoringPage() {
             </div>
           </TabsContent>
 
-          <TabsContent value="history" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Recent Scoring Decisions</CardTitle>
-                <CardDescription>
-                  View and analyze past scoring calculations
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {[1, 2, 3, 4, 5].map((i) => (
-                    <div key={i} className="flex items-center justify-between p-4 border rounded-lg">
-                      <div className="flex items-center gap-4">
-                        <div className="text-center">
-                          <div className="text-2xl font-bold text-blue-600">
-                            {85 + i}
-                          </div>
-                          <p className="text-xs text-muted-foreground">Score</p>
-                        </div>
-                        <div>
-                          <p className="font-medium">Ticket #{1000 + i}</p>
-                          <p className="text-sm text-muted-foreground">
-                            Assigned to Agent {100 + i} • {i} hours ago
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline">Auto-assigned</Badge>
-                        <Button variant="ghost" size="sm">
-                          View Details
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
         </Tabs>
       </div>
       
