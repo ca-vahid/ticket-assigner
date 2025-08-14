@@ -32,8 +32,18 @@ export default function SkillsPage() {
   const [configs, setConfigs] = useState([]);
   const [categories, setCategories] = useState([]);
   const [syncingCategories, setSyncingCategories] = useState(false);
+  const [filterAgent, setFilterAgent] = useState<{id: string, name: string} | null>(null);
+  const [activeTab, setActiveTab] = useState('pending');
 
   useEffect(() => {
+    // Check if we came from agents page with a specific agent to review
+    const agentFilter = sessionStorage.getItem('skillsFilterAgent');
+    if (agentFilter) {
+      const agent = JSON.parse(agentFilter);
+      setFilterAgent(agent);
+      setActiveTab('pending'); // Switch to pending tab
+      sessionStorage.removeItem('skillsFilterAgent'); // Clear after reading
+    }
     loadData();
   }, []);
 
@@ -68,14 +78,17 @@ export default function SkillsPage() {
       const response = await fetch(`/api/skills/detected/pending?_t=${timestamp}`, {
         cache: 'no-store',
         headers: {
-          'Cache-Control': 'no-cache'
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
         }
       });
       const data = await response.json();
-      console.log(`Fetched ${data.total} pending skills`);
+      console.log(`Fetched ${data.total} pending skills from API`);
+      console.log('Pending skills by agent:', data.byAgent);
       setPendingSkills(data);
     } catch (error) {
       console.error('Failed to fetch pending skills:', error);
+      setPendingSkills({ total: 0, byAgent: {}, byMethod: {} });
     }
   };
 
@@ -358,8 +371,31 @@ export default function SkillsPage() {
         {/* Stats Overview */}
         {stats && <SkillDetectionStatsV2 stats={stats} isRefreshing={loading} />}
 
+        {/* Agent Filter Alert */}
+        {filterAgent && (
+          <Alert className="border-blue-200 bg-blue-50">
+            <AlertCircle className="h-4 w-4 text-blue-600" />
+            <AlertDescription className="flex items-center justify-between">
+              <div>
+                <strong>Filtering skills for:</strong> {filterAgent.name}
+                <span className="ml-2 text-sm text-gray-600">
+                  Showing newly detected skills for review
+                </span>
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setFilterAgent(null)}
+                className="h-7 px-2"
+              >
+                Clear Filter
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* Main Content Tabs */}
-        <Tabs defaultValue="pending" className="space-y-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList>
             <TabsTrigger value="pending" className="flex items-center gap-2">
               <Clock className="h-4 w-4" />
@@ -399,6 +435,7 @@ export default function SkillsPage() {
               <PendingSkillsReviewV2 
                 pendingSkills={pendingSkills}
                 onUpdate={loadData}
+                filterAgent={filterAgent}
               />
             )}
           </TabsContent>

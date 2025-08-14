@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { MainLayout } from '@/components/layout/main-layout';
 import { AgentList } from '@/components/agents/agent-list';
 import { AgentDetail } from '@/components/agents/agent-detail';
@@ -10,10 +11,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { RefreshCw, Search, Users, Upload, TicketIcon, Brain, UserX, UserCheck } from 'lucide-react';
+import { RefreshCw, Search, Users, Upload, TicketIcon, Brain, UserX, UserCheck, ExternalLink } from 'lucide-react';
 import { useAgents } from '@/hooks/useAgents';
 
 export default function AgentsPage() {
+  const router = useRouter();
   const { agents, loading, error, refreshAgents, syncAgents, updateAgent } = useAgents();
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -34,6 +36,16 @@ export default function AgentsPage() {
     description: '',
     onConfirm: () => {},
   });
+
+  // Auto-update selectedAgent when agents data changes
+  useEffect(() => {
+    if (selectedAgent && agents) {
+      const updatedAgent = agents.find(a => a.id === selectedAgent.id);
+      if (updatedAgent && JSON.stringify(updatedAgent) !== JSON.stringify(selectedAgent)) {
+        setSelectedAgent(updatedAgent);
+      }
+    }
+  }, [agents]);
 
   const handleSync = async () => {
     setSyncing(true);
@@ -75,13 +87,39 @@ export default function AgentsPage() {
       const result = await response.json();
       
       if (result.success) {
+        const hasNewSkills = result.skillsDetected > 0;
+        const hasPendingSkills = result.pendingSkillsCount > 0;
+        const hasApprovedSkills = result.approvedSkillsCount > 0;
+        const hasReAddedSkills = result.skillsReAdded > 0;
+        const alreadyDetected = result.alreadyDetected;
+        
+        let message = '';
+        if (hasNewSkills || hasReAddedSkills) {
+          if (hasReAddedSkills && !hasPendingSkills) {
+            message = `Re-added ${result.skillsDetected} previously removed skill(s) for ${agentName}.`;
+          } else {
+            message = `Successfully detected ${result.skillsDetected} skill(s) for ${agentName}.`;
+          }
+        } else if (hasPendingSkills) {
+          message = `No new skills detected, but ${result.pendingSkillsCount} skill(s) are pending review for ${agentName}.`;
+        } else if (alreadyDetected && hasApprovedSkills) {
+          message = `Skills already detected and approved for ${agentName}. ${result.approvedSkillsCount} skill(s) are currently active.`;
+        } else {
+          message = `No skills detected for ${agentName}. This agent may not have enough resolved tickets (5+ required per category).`;
+        }
+        
+        if (hasPendingSkills) {
+          message += ' Go to Skills page to review pending skills.';
+        }
+        
         setDetectionResult({
           agentId,
           agentName,
           skillsDetected: result.skillsDetected || 0,
-          message: result.skillsDetected > 0 
-            ? `Successfully detected ${result.skillsDetected} skill(s) for ${agentName}. Go to Skills page to review and approve them.`
-            : `No new skills detected for ${agentName}. This agent may not have enough resolved tickets (5+ required per category).`
+          pendingSkillsCount: result.pendingSkillsCount || 0,
+          approvedSkillsCount: result.approvedSkillsCount || 0,
+          alreadyDetected: result.alreadyDetected || false,
+          message
         });
       } else {
         setDetectionResult({
@@ -92,6 +130,7 @@ export default function AgentsPage() {
         });
       }
       
+      // Force refresh agents data after detection
       await refreshAgents();
     } catch (error) {
       console.error('Failed to detect skills:', error);
@@ -128,11 +167,7 @@ export default function AgentsPage() {
   const handleAgentUpdate = async (agentId: string, updates: any, skipConfirm = false) => {
     const performUpdate = async () => {
       await updateAgent(agentId, updates);
-      const updatedAgents = await refreshAgents();
-      const updatedAgent = updatedAgents?.find(a => a.id === agentId);
-      if (updatedAgent) {
-        setSelectedAgent(updatedAgent);
-      }
+      // The useEffect will automatically update selectedAgent when agents data refreshes
       
       // If deactivating, switch to inactive tab to show the agent there
       if ('isAvailable' in updates && !updates.isAvailable) {
@@ -295,6 +330,30 @@ export default function AgentsPage() {
                 </div>
                 <div className={`text-sm ${detectionResult.error ? 'text-red-700' : 'text-green-700'}`}>
                   {detectionResult.message}
+                  {/* Add link to review skills if skills were detected or pending */}
+                  {((detectionResult.skillsDetected > 0 || detectionResult.pendingSkillsCount > 0) && !detectionResult.error) && (
+                    <div className="mt-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          // Navigate to skills page with agent filter
+                          // Store agent info in sessionStorage to filter on skills page
+                          if (detectionResult.agentId && detectionResult.agentName) {
+                            sessionStorage.setItem('skillsFilterAgent', JSON.stringify({
+                              id: detectionResult.agentId,
+                              name: detectionResult.agentName
+                            }));
+                          }
+                          router.push('/skills');
+                        }}
+                        className="h-7 px-2 py-0 text-xs font-medium border-green-300 text-green-700 hover:bg-green-100"
+                      >
+                        <ExternalLink className="h-3 w-3 mr-1" />
+                        Review {detectionResult.pendingSkillsCount || detectionResult.skillsDetected} Skill{(detectionResult.pendingSkillsCount || detectionResult.skillsDetected) > 1 ? 's' : ''}
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
               <button
@@ -373,6 +432,11 @@ export default function AgentsPage() {
                           {selectedAgent.firstName} {selectedAgent.lastName}
                         </h3>
                         <p className="text-sm text-gray-600">{selectedAgent.email}</p>
+                        {selectedAgent.location && (
+                          <p className="text-xs text-gray-500">
+                            {selectedAgent.location.name} • {selectedAgent.location.timezone}
+                          </p>
+                        )}
                       </div>
                     </div>
                     <div className="flex gap-3 items-start">

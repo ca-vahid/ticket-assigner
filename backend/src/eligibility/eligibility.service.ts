@@ -3,6 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Agent } from '../database/entities/agent.entity';
 import { Category } from '../database/entities/category.entity';
+import { Location } from '../database/entities/location.entity';
+import { LocationsService } from '../locations/locations.service';
 import { EligibilityContext, EligibilityResult, FilterCriteria } from './eligibility.types';
 
 @Injectable()
@@ -14,6 +16,9 @@ export class EligibilityService {
     private agentRepository: Repository<Agent>,
     @InjectRepository(Category)
     private categoryRepository: Repository<Category>,
+    @InjectRepository(Location)
+    private locationRepository: Repository<Location>,
+    private locationsService: LocationsService,
   ) {}
 
   async getEligibleAgents(
@@ -23,7 +28,8 @@ export class EligibilityService {
     
     // Start with all active agents
     let query = this.agentRepository.createQueryBuilder('agent')
-      .leftJoinAndSelect('agent.specializations', 'specializations');
+      .leftJoinAndSelect('agent.specializations', 'specializations')
+      .leftJoinAndSelect('agent.location', 'location');
 
     // Apply status filter
     query = query.where('agent.isAvailable = :isAvailable', { isAvailable: true });
@@ -31,14 +37,43 @@ export class EligibilityService {
     // Apply capacity filter
     query = query.andWhere('agent.currentTicketCount < agent.maxConcurrentTickets');
 
-    // Apply location filter if onsite is required
-    if (context.requiresOnsite) {
-      // Skip onsite filter for now (field not in current entity)
+    // Apply location filter
+    if (context.locationId || context.requiresOnsite) {
+      // If specific location required
+      if (context.locationId) {
+        // Check if we should allow cross-location assignments
+        if (context.allowCrossLocation) {
+          // Include remote agents and agents from the same timezone
+          query = query.andWhere(`(
+            agent.location_id = :locationId 
+            OR agent.is_remote = true 
+            OR location.timezone = (SELECT timezone FROM locations WHERE id = :locationId)
+          )`, { locationId: context.locationId });
+        } else {
+          // Strict location matching
+          query = query.andWhere('agent.location_id = :locationId', { 
+            locationId: context.locationId 
+          });
+        }
+      }
       
-      if (context.location) {
-        query = query.andWhere('agent.location = :location', { 
-          location: context.location 
-        });
+      // If onsite is required, exclude remote-only agents
+      if (context.requiresOnsite) {
+        query = query.andWhere('agent.is_remote = false');
+        query = query.andWhere(`location.metadata->>'supportTypes' LIKE '%onsite%'`);
+      }
+    }
+
+    // Apply timezone filter for urgent tickets
+    if (context.isUrgent && context.preferredTimezone) {
+      const currentTime = await this.locationsService.getCurrentTimeInTimezone(context.preferredTimezone);
+      if (currentTime.isOfficeHours) {
+        // Prefer agents in the same timezone during office hours
+        query = query.addOrderBy(
+          `CASE WHEN location.timezone = :preferredTimezone THEN 0 ELSE 1 END`, 
+          'ASC'
+        );
+        query.setParameter('preferredTimezone', context.preferredTimezone);
       }
     }
 

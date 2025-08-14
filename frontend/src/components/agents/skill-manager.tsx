@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -76,6 +77,7 @@ const SKILL_CATEGORIES = {
 };
 
 export function SkillManager({ agent, onSkillsUpdate, onDetectSkills }: SkillManagerProps) {
+  const queryClient = useQueryClient();
   const [agentSkills, setAgentSkills] = useState<string[]>(agent.skills || []);
   const [freshserviceCategories, setFreshserviceCategories] = useState<string[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(false);
@@ -178,6 +180,8 @@ export function SkillManager({ agent, onSkillsUpdate, onDetectSkills }: SkillMan
     setSaving(true);
     try {
       await onSkillsUpdate(agentSkills);
+      // Invalidate agents query to refresh data
+      await queryClient.invalidateQueries({ queryKey: ['agents'] });
     } finally {
       setSaving(false);
     }

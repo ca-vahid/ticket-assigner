@@ -6,6 +6,7 @@ import { Agent } from '../database/entities/agent.entity';
 import { Decision, DecisionType } from '../database/entities/decision.entity';
 import { Category } from '../database/entities/category.entity';
 import { Settings } from '../database/entities/settings.entity';
+import { Location } from '../database/entities/location.entity';
 import { EligibilityService } from '../eligibility/eligibility.service';
 import { ScoringService } from '../scoring/scoring.service';
 import { FreshserviceService } from '../integrations/freshservice/freshservice.service';
@@ -33,6 +34,8 @@ export class AssignmentService {
     private categoryRepository: Repository<Category>,
     @InjectRepository(Settings)
     private settingsRepository: Repository<Settings>,
+    @InjectRepository(Location)
+    private locationRepository: Repository<Location>,
     private eligibilityService: EligibilityService,
     private scoringService: ScoringService,
     private freshserviceService: FreshserviceService,
@@ -242,6 +245,30 @@ export class AssignmentService {
     ticket: any,
     category: Category | null
   ): Promise<TicketContext> {
+    // Extract location information from ticket if available
+    const requesterLocationId = ticket.requester?.location_id;
+    let locationInfo: any = {};
+    
+    if (requesterLocationId) {
+      // Try to find the location in our database
+      const location = await this.locationRepository.findOne({
+        where: { freshserviceId: requesterLocationId.toString() }
+      });
+      
+      if (location) {
+        locationInfo = {
+          locationId: location.id,
+          timezone: location.timezone,
+          requesterLocation: location.name
+        };
+      }
+    }
+
+    // Check if ticket requires onsite support based on category or keywords
+    const requiresOnsite = (category as any)?.metadata?.requiresOnsite || 
+      (ticket.description_text || ticket.description || '').toLowerCase().includes('onsite') ||
+      (ticket.subject || '').toLowerCase().includes('onsite');
+
     return {
       ticketId: ticket.id.toString(),
       subject: ticket.subject,
@@ -249,7 +276,9 @@ export class AssignmentService {
       categoryId: category?.id,
       requiredSkills: category?.requiredSkills || [],
       requiredLevel: category?.priorityLevel,
-      requiresOnsite: false,
+      requiresOnsite,
+      location: ticket.location_name, // Legacy field
+      ...locationInfo, // Spread new location fields
       isVip: ticket.priority === 4 || ticket.urgency === 4,
       priority: this.mapPriority(ticket.priority),
       estimatedHours: category?.averageResolutionTime
@@ -389,5 +418,44 @@ export class AssignmentService {
     }
 
     return query.getMany();
+  }
+
+  async deleteOldAssignments(days: number): Promise<number> {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - days);
+    
+    const result = await this.decisionRepository
+      .createQueryBuilder()
+      .delete()
+      .where('createdAt < :cutoffDate', { cutoffDate })
+      .execute();
+    
+    this.logger.log(`Deleted ${result.affected} assignments older than ${days} days`);
+    return result.affected || 0;
+  }
+
+  async deleteAllAssignments(): Promise<number> {
+    const result = await this.decisionRepository
+      .createQueryBuilder()
+      .delete()
+      .execute();
+    
+    this.logger.log(`Deleted all ${result.affected} assignments`);
+    return result.affected || 0;
+  }
+
+  async deleteAssignment(id: string): Promise<void> {
+    const result = await this.decisionRepository.delete(id);
+    
+    if (result.affected === 0) {
+      throw new Error(`Assignment with ID ${id} not found`);
+    }
+    
+    this.logger.log(`Deleted assignment ${id}`);
+  }
+
+  async reloadSettings(): Promise<void> {
+    await this.loadSettings();
+    this.logger.log('Assignment settings reloaded');
   }
 }

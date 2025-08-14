@@ -4,11 +4,12 @@ import { ScoringService } from './scoring.service';
 import { ScoringController } from './scoring.controller';
 import { Settings } from '../database/entities/settings.entity';
 import { Agent } from '../database/entities/agent.entity';
+import { Location } from '../database/entities/location.entity';
 import { SyncModule } from '../sync/sync.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Settings, Agent]),
+    TypeOrmModule.forFeature([Settings, Agent, Location]),
     SyncModule  // Import to get TicketWorkloadCalculator
   ],
   controllers: [ScoringController],

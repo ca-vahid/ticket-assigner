@@ -1,4 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Settings } from '../database/entities/settings.entity';
 
 export interface TicketWorkload {
   ticketId: string;
@@ -26,6 +29,12 @@ export interface AgentWorkload {
 @Injectable()
 export class TicketWorkloadCalculator {
   private readonly logger = new Logger(TicketWorkloadCalculator.name);
+  private ticketAgeWeights: { fresh: number; recent: number; stale: number; old: number } | null = null;
+
+  constructor(
+    @InjectRepository(Settings)
+    private settingsRepository: Repository<Settings>,
+  ) {}
 
   /**
    * Calculate business days between two dates
@@ -47,53 +56,58 @@ export class TicketWorkloadCalculator {
   }
 
   /**
-   * Calculate the weight of a ticket based on its age
-   * Fresh tickets (today) have the highest weight
-   * Older tickets have progressively lower weight
-   * 
-   * Scoring strategy:
-   * - 0 business days (today): 2.0 weight (double count - prevents gaming)
-   * - 1 business day: 1.5 weight
-   * - 2 business days: 1.2 weight
-   * - 3-5 business days: 1.0 weight (normal)
-   * - 6-10 business days: 0.7 weight (stale)
-   * - 11-14 business days: 0.3 weight (very stale)
-   * - 15+ business days: 0.1 weight (abandoned)
+   * Load ticket age weights from settings
    */
-  calculateTicketWeight(ticketCreatedDate: Date, now: Date = new Date()): TicketWorkload {
+  private async loadTicketAgeWeights(): Promise<void> {
+    const setting = await this.settingsRepository.findOne({
+      where: { key: 'scoring.ticketAgeWeights' }
+    });
+    
+    if (setting) {
+      this.ticketAgeWeights = setting.value;
+    } else {
+      // Use default weights
+      this.ticketAgeWeights = {
+        fresh: 2.0,
+        recent: 1.2,
+        stale: 0.5,
+        old: 0.1
+      };
+    }
+  }
+
+  /**
+   * Calculate the weight of a ticket based on its age
+   * Uses configurable weights from settings
+   */
+  async calculateTicketWeight(ticketCreatedDate: Date, now: Date = new Date()): Promise<TicketWorkload> {
+    // Ensure weights are loaded
+    if (!this.ticketAgeWeights) {
+      await this.loadTicketAgeWeights();
+    }
     const ageInDays = Math.floor((now.getTime() - ticketCreatedDate.getTime()) / (1000 * 60 * 60 * 24));
     const ageInBusinessDays = this.calculateBusinessDays(ticketCreatedDate, now);
     
     let weight: number;
     let category: 'fresh' | 'recent' | 'stale' | 'abandoned';
+    const weights = this.ticketAgeWeights!;
     
-    if (ageInBusinessDays === 0) {
-      // Today's ticket - highest weight to prevent gaming
-      weight = 2.0;
+    // Use configurable weights based on age
+    if (ageInBusinessDays <= 1) {
+      // 0-1 business days - fresh
+      weight = weights.fresh;
       category = 'fresh';
-    } else if (ageInBusinessDays === 1) {
-      // Yesterday's ticket
-      weight = 1.5;
-      category = 'fresh';
-    } else if (ageInBusinessDays === 2) {
-      // 2 business days old
-      weight = 1.2;
-      category = 'recent';
     } else if (ageInBusinessDays <= 5) {
-      // 3-5 business days - normal weight
-      weight = 1.0;
+      // 2-5 business days - recent
+      weight = weights.recent;
       category = 'recent';
-    } else if (ageInBusinessDays <= 10) {
-      // 6-10 business days - getting stale
-      weight = 0.7;
-      category = 'stale';
     } else if (ageInBusinessDays <= 14) {
-      // 11-14 business days - very stale
-      weight = 0.3;
+      // 6-14 business days - stale
+      weight = weights.stale;
       category = 'stale';
     } else {
-      // 15+ business days - abandoned
-      weight = 0.1;
+      // 15+ business days - old/abandoned
+      weight = weights.old;
       category = 'abandoned';
     }
     
@@ -111,10 +125,10 @@ export class TicketWorkloadCalculator {
    * Calculate agent's workload based on their tickets
    * Returns both raw count and weighted count
    */
-  calculateAgentWorkload(
+  async calculateAgentWorkload(
     agentId: string,
     tickets: Array<{ id: string; created_at: Date | string; status: number }>
-  ): AgentWorkload {
+  ): Promise<AgentWorkload> {
     const now = new Date();
     const ticketWorkloads: TicketWorkload[] = [];
     const breakdown = {
@@ -131,7 +145,7 @@ export class TicketWorkloadCalculator {
         ? new Date(ticket.created_at) 
         : ticket.created_at;
       
-      const workload = this.calculateTicketWeight(createdDate, now);
+      const workload = await this.calculateTicketWeight(createdDate, now);
       workload.ticketId = ticket.id;
       
       ticketWorkloads.push(workload);

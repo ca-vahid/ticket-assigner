@@ -76,6 +76,14 @@ class ApiService {
     return this.api.put('/api/scoring/weights', weights)
   }
 
+  async getTicketAgeWeights() {
+    return this.api.get('/api/scoring/ticket-age-weights')
+  }
+
+  async updateTicketAgeWeights(weights: any) {
+    return this.api.put('/api/scoring/ticket-age-weights', weights)
+  }
+
   // Eligibility endpoints
   async checkEligibility(context: any) {
     return this.api.post('/api/eligibility/check', context)
@@ -96,6 +104,102 @@ class ApiService {
   
   async updateAutoAssignStatus(enabled: boolean) {
     return this.api.put('/api/settings/auto-assign', { enabled })
+  }
+
+  // Delete endpoints
+  async deleteOldAssignments(days: number) {
+    return this.api.delete(`/api/assignment/history/old?days=${days}`)
+  }
+
+  async deleteAllAssignments() {
+    return this.api.delete('/api/assignment/history/all')
+  }
+
+  async deleteAssignment(id: string) {
+    return this.api.delete(`/api/assignment/history/${id}`)
+  }
+
+  async deleteAgent(id: string) {
+    return this.api.delete(`/api/agents/${id}`)
+  }
+
+  async deleteInactiveAgents() {
+    return this.api.delete('/api/agents/inactive/all')
+  }
+
+  async clearAgentSkills(agentId: string) {
+    return this.api.put(`/api/agents/${agentId}/clear-skills`, {})
+  }
+
+  async clearAllDetectedSkills() {
+    return this.api.delete('/api/agents/skills/detected')
+  }
+
+  // Location endpoints
+  async getLocations() {
+    return this.api.get<any[]>('/api/locations')
+  }
+
+  async getLocation(id: string) {
+    return this.api.get(`/api/locations/${id}`)
+  }
+
+  async syncLocations() {
+    return this.api.post('/api/locations/sync', {})
+  }
+
+  async getLocationStats() {
+    return this.api.get('/api/locations/stats/summary')
+  }
+
+  async updateLocation(id: string, data: {
+    name?: string
+    timezone?: string
+    country?: string
+    city?: string
+    metadata?: any
+  }) {
+    return this.api.put(`/api/locations/${id}`, data)
+  }
+
+  async deleteLocation(id: string) {
+    return this.api.delete(`/api/locations/${id}`)
+  }
+
+  async deleteEmptyLocations() {
+    return this.api.delete('/api/locations/cleanup/empty')
+  }
+
+  async getLocationAgents(locationId: string) {
+    return this.api.get(`/api/locations/${locationId}/agents`)
+  }
+
+  // Audit log endpoints
+  async createAuditLog(data: {
+    action: string
+    type: 'delete' | 'create' | 'update' | 'reset' | 'export' | 'import' | 'sync' | 'settings'
+    user: string
+    entityType?: string
+    entityId?: string
+    metadata?: Record<string, any>
+  }) {
+    return this.api.post('/api/audit/log', data)
+  }
+
+  async getAuditLogs(params?: {
+    limit?: number
+    offset?: number
+    type?: string
+    user?: string
+    entityType?: string
+    startDate?: string
+    endDate?: string
+  }) {
+    return this.api.get('/api/audit', { params })
+  }
+
+  async clearOldAuditLogs(days: number) {
+    return this.api.delete(`/api/audit/old?days=${days}`)
   }
 }
 

@@ -10,6 +10,7 @@ import {
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SkillDetectionService } from './skill-detection.service';
 import { CategoryService } from './category.service';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -19,6 +20,7 @@ import { DetectedSkill, DetectedSkillStatus } from '../database/entities/detecte
 import { SkillAuditLog } from '../database/entities/skill-audit-log.entity';
 import { Agent } from '../database/entities/agent.entity';
 
+@ApiTags('skills')
 @Controller('api/skills')
 export class SkillsController {
   constructor(
@@ -100,10 +102,31 @@ export class SkillsController {
       throw new HttpException('Agent not found', HttpStatus.NOT_FOUND);
     }
 
+    // Get all skills for this agent (pending and approved)
+    const [pendingSkills, approvedSkills] = await Promise.all([
+      this.detectedSkillRepository.find({
+        where: { 
+          agentId: body.agentId, 
+          status: DetectedSkillStatus.PENDING 
+        },
+        select: ['id', 'skillName', 'skillType', 'confidence']
+      }),
+      this.detectedSkillRepository.find({
+        where: { 
+          agentId: body.agentId, 
+          status: DetectedSkillStatus.APPROVED 
+        },
+        select: ['id', 'skillName', 'skillType', 'confidence']
+      })
+    ]);
+
     return {
       agentId: agent.id,
       agentName: `${agent.firstName} ${agent.lastName}`,
-      detectedSkills: [], // Will be populated after detection
+      detectedSkills: pendingSkills.map(s => s.skillName),
+      pendingSkillsCount: result.pendingSkillsCount || pendingSkills.length,
+      approvedSkillsCount: approvedSkills.length,
+      alreadyDetected: result.skillsDetected === 0 && approvedSkills.length > 0,
       ...result
     };
   }
@@ -279,6 +302,9 @@ export class SkillsController {
     
     let approvedCount = 0;
     let errors = [];
+    
+    // Cache agents to avoid overwriting skills when multiple skills are approved for the same agent
+    const agentCache = new Map<string, any>();
 
     for (const skill of skills) {
       try {
@@ -287,75 +313,101 @@ export class SkillsController {
         skill.reviewedAt = new Date();
         skill.isActive = true;
 
-      // Add to agent's skills - check if agent exists
-      let agent = skill.agent;
-      if (!agent) {
-        // Load agent if not loaded
-        console.log(`Agent not loaded for skill ${skill.skillName}, loading from DB...`);
-        agent = await this.agentRepository.findOne({
-          where: { id: skill.agentId }
-        });
+        // Get agent from cache or load from DB
+        let agent = agentCache.get(skill.agentId);
+        
         if (!agent) {
-          console.error(`Agent not found for skill ${skill.skillName} (agentId: ${skill.agentId})`);
-          // Still update the skill status even if agent is missing
-          await this.detectedSkillRepository.save(skill);
-          continue;
+          // Try to get from skill relation first
+          agent = skill.agent;
+          
+          if (!agent) {
+            // Load agent if not loaded
+            console.log(`Agent not loaded for skill ${skill.skillName}, loading from DB...`);
+            agent = await this.agentRepository.findOne({
+              where: { id: skill.agentId }
+            });
+            
+            if (!agent) {
+              console.error(`Agent not found for skill ${skill.skillName} (agentId: ${skill.agentId})`);
+              // Still update the skill status even if agent is missing
+              await this.detectedSkillRepository.save(skill);
+              continue;
+            }
+          }
+          
+          // Add to cache for subsequent skills
+          agentCache.set(skill.agentId, agent);
         }
-        skill.agent = agent;
-      }
-      
-      // Add to main skills array
-      if (!agent.skills) {
-        agent.skills = [];
-      }
-      if (!agent.skills.includes(skill.skillName)) {
-        agent.skills.push(skill.skillName);
-      }
-      
-      // Also track in auto-detected skills
-      if (!agent.autoDetectedSkills) {
-        agent.autoDetectedSkills = [];
-      }
-      if (!agent.autoDetectedSkills.includes(skill.skillName)) {
-        agent.autoDetectedSkills.push(skill.skillName);
-      }
+        
+        // Add to main skills array
+        if (!agent.skills) {
+          agent.skills = [];
+        }
+        if (!agent.skills.includes(skill.skillName)) {
+          agent.skills.push(skill.skillName);
+          console.log(`Added skill ${skill.skillName} to agent ${agent.firstName} ${agent.lastName}'s skills array`);
+        }
+        
+        // Also track in auto-detected skills
+        if (!agent.autoDetectedSkills) {
+          agent.autoDetectedSkills = [];
+        }
+        if (!agent.autoDetectedSkills.includes(skill.skillName)) {
+          agent.autoDetectedSkills.push(skill.skillName);
+        }
 
-      // Update skill metadata
-      if (!agent.skillMetadata) {
-        agent.skillMetadata = {};
-      }
-      if (!agent.skillMetadata.category) {
-        agent.skillMetadata.category = [];
-      }
-      
-      agent.skillMetadata.category.push({
-        skill: skill.skillName,
-        confidence: skill.confidence,
-        ticketCount: skill.metadata?.ticketCount || 0,
-      });
+        // Update skill metadata
+        if (!agent.skillMetadata) {
+          agent.skillMetadata = {};
+        }
+        if (!agent.skillMetadata.category) {
+          agent.skillMetadata.category = [];
+        }
+        
+        // Check if skill already exists in metadata to avoid duplicates
+        const existingMetadata = agent.skillMetadata.category.find(m => m.skill === skill.skillName);
+        if (!existingMetadata) {
+          agent.skillMetadata.category.push({
+            skill: skill.skillName,
+            confidence: skill.confidence,
+            ticketCount: skill.metadata?.ticketCount || 0,
+          });
+        }
 
-      await this.agentRepository.save(agent);
-      await this.detectedSkillRepository.save(skill);
+        // Save the skill status update
+        await this.detectedSkillRepository.save(skill);
 
-      // Create audit log
-      await this.auditLogRepository.save({
-        agentId: agent.id,
-        action: 'SKILL_APPROVED',
-        skillName: skill.skillName,
-        newValue: { skill: skill.skillName, confidence: skill.confidence },
-        performedBy: body.reviewedBy || body.approvedBy || 'Admin',
-        metadata: {
-          detectionMethod: skill.detectionMethod,
-          confidence: skill.confidence,
-        },
-      });
-      
-      approvedCount++;
-      console.log(`Successfully approved skill ${skill.skillName} for agent ${agent.firstName} ${agent.lastName}`);
-      
+        // Create audit log
+        await this.auditLogRepository.save({
+          agentId: agent.id,
+          action: 'SKILL_APPROVED',
+          skillName: skill.skillName,
+          newValue: { skill: skill.skillName, confidence: skill.confidence },
+          performedBy: body.reviewedBy || body.approvedBy || 'Admin',
+          metadata: {
+            detectionMethod: skill.detectionMethod,
+            confidence: skill.confidence,
+          },
+        });
+        
+        approvedCount++;
+        console.log(`Successfully approved skill ${skill.skillName} for agent ${agent.firstName} ${agent.lastName}`);
+        
       } catch (error) {
         console.error(`Failed to approve skill ${skill.skillName}:`, error);
         errors.push(`${skill.skillName}: ${error.message}`);
+      }
+    }
+    
+    // Save all modified agents after processing all skills
+    console.log(`Saving ${agentCache.size} modified agents...`);
+    for (const [agentId, agent] of agentCache) {
+      try {
+        await this.agentRepository.save(agent);
+        console.log(`Saved agent ${agent.firstName} ${agent.lastName} with ${agent.skills?.length || 0} skills`);
+      } catch (error) {
+        console.error(`Failed to save agent ${agentId}:`, error);
+        errors.push(`Agent ${agentId}: ${error.message}`);
       }
     }
 
@@ -364,6 +416,62 @@ export class SkillsController {
       approved: approvedCount,
       requested: body.skillIds.length,
       errors: errors.length > 0 ? errors : undefined
+    };
+  }
+
+  @Post('fix-approved-skills')
+  @ApiOperation({ summary: 'Fix approved skills not showing in agent skills array' })
+  async fixApprovedSkills() {
+    const approvedSkills = await this.detectedSkillRepository.find({
+      where: { status: DetectedSkillStatus.APPROVED },
+      relations: ['agent']
+    });
+    
+    console.log(`Found ${approvedSkills.length} approved skills`);
+    
+    // Group by agent
+    const agentSkillsMap = new Map<string, any[]>();
+    for (const skill of approvedSkills) {
+      if (!skill.agent) continue;
+      
+      const agentId = skill.agent.id;
+      if (!agentSkillsMap.has(agentId)) {
+        agentSkillsMap.set(agentId, []);
+      }
+      agentSkillsMap.get(agentId)!.push(skill);
+    }
+    
+    // Update each agent
+    let updated = 0;
+    let totalSkillsAdded = 0;
+    
+    for (const [agentId, skills] of agentSkillsMap) {
+      const agent = await this.agentRepository.findOne({ where: { id: agentId } });
+      if (!agent) continue;
+      
+      if (!agent.skills) agent.skills = [];
+      
+      let added = 0;
+      for (const skill of skills) {
+        if (!agent.skills.includes(skill.skillName)) {
+          agent.skills.push(skill.skillName);
+          added++;
+        }
+      }
+      
+      if (added > 0) {
+        await this.agentRepository.save(agent);
+        console.log(`Updated agent ${agent.email}: added ${added} skills to main skills array`);
+        updated++;
+        totalSkillsAdded += added;
+      }
+    }
+    
+    return { 
+      success: true, 
+      agentsUpdated: updated, 
+      skillsAdded: totalSkillsAdded,
+      totalApprovedSkills: approvedSkills.length 
     };
   }
 

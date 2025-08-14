@@ -44,6 +44,17 @@ export const DEFAULT_SETTINGS = [
     category: 'scoring'
   },
   {
+    key: 'scoring.ticketAgeWeights',
+    value: {
+      fresh: 2.0,      // 0-1 days
+      recent: 1.2,     // 2-5 days
+      stale: 0.5,      // 6-14 days
+      old: 0.1         // 15+ days
+    },
+    description: 'Ticket age weight multipliers for workload calculation',
+    category: 'scoring'
+  },
+  {
     key: 'assignment.autoAssignEnabled',
     value: false,
     description: 'Enable automatic ticket assignment',

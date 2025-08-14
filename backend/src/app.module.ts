@@ -18,6 +18,8 @@ import { CategoriesModule } from './categories/categories.module';
 import { DecisionsModule } from './decisions/decisions.module';
 import { SettingsModule } from './settings/settings.module';
 import { SkillsModule } from './skills/skills.module';
+import { AuditModule } from './audit/audit.module';
+import { LocationsModule } from './locations/locations.module';
 
 @Module({
   imports: [
@@ -52,6 +54,8 @@ import { SkillsModule } from './skills/skills.module';
     DecisionsModule,
     SettingsModule,
     SkillsModule,
+    AuditModule,
+    LocationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

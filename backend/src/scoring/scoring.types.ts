@@ -15,12 +15,15 @@ export interface TicketContext {
   relatedSkills?: string[];
   requiredLevel?: string;
   requiresOnsite: boolean;
-  location?: string;
+  location?: string; // Legacy field for backward compatibility
+  locationId?: string; // New location entity ID
+  timezone?: string; // Ticket's timezone for urgent support
   isVip: boolean;
   priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
   estimatedHours?: number;
   requesterId?: string;
   requesterDepartment?: string;
+  requesterLocation?: string; // Location of the requester
 }
 
 export interface ScoringResult {

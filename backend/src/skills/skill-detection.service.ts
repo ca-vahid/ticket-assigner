@@ -139,12 +139,28 @@ export class SkillDetectionService {
         await this.configRepository.save(config);
       }
 
-      this.logger.log(`✅ Skill detection complete: ${agentsProcessed} agents, ${skillsDetected} skills detected`);
+      this.logger.log(`✅ Skill detection complete: ${agentsProcessed} agents, ${skillsDetected} skills detected/re-added`);
+
+      // Check for pending skills after detection
+      let pendingSkillsCount = 0;
+      let reAddedCount = skillsDetected; // Skills that were re-added are included in skillsDetected
+      
+      if (agentId) {
+        const pendingSkills = await this.detectedSkillRepository.count({
+          where: { 
+            agentId, 
+            status: DetectedSkillStatus.PENDING 
+          }
+        });
+        pendingSkillsCount = pendingSkills;
+      }
 
       return {
         success: true,
         agentsProcessed,
         skillsDetected,
+        skillsReAdded: reAddedCount,
+        pendingSkillsCount,
         errors
       };
 
@@ -371,8 +387,16 @@ export class SkillDetectionService {
         }
       });
       
-      // Only create new if not previously approved (rejected skills can be re-detected)
-      if (!previouslyReviewed || previouslyReviewed.status === DetectedSkillStatus.REJECTED) {
+      // Check if skill was manually removed from agent even if previously approved
+      const skillRemovedFromAgent = previouslyReviewed && 
+        previouslyReviewed.status === DetectedSkillStatus.APPROVED &&
+        agent.skills && 
+        !agent.skills.includes(skill.skillName);
+      
+      // Create new if not previously approved, was rejected, or was manually removed
+      if (!previouslyReviewed || 
+          previouslyReviewed.status === DetectedSkillStatus.REJECTED || 
+          skillRemovedFromAgent) {
         const detectedSkill = this.detectedSkillRepository.create({
           agent,
           agentId: agent.id,
@@ -404,9 +428,36 @@ export class SkillDetectionService {
         // Return true - new skill was created
         return true;
       } else {
-        this.logger.log(`Skill ${skill.skillName} already approved for ${agent.email}, skipping`);
-        // Return false - skill was not created/updated
-        return false;
+        // Check if skill is actually in agent's skills array
+        if (!agent.skills || !agent.skills.includes(skill.skillName)) {
+          // Skill was approved but removed manually, re-add it
+          this.logger.log(`Re-adding previously approved skill ${skill.skillName} to ${agent.email} (was manually removed)`);
+          
+          if (!agent.skills) agent.skills = [];
+          agent.skills.push(skill.skillName);
+          
+          // Also ensure it's in the appropriate category arrays
+          if (!agent.autoDetectedSkills) agent.autoDetectedSkills = [];
+          if (!agent.autoDetectedSkills.includes(skill.skillName)) {
+            agent.autoDetectedSkills.push(skill.skillName);
+          }
+          
+          if (skill.type === SkillType.CATEGORY) {
+            if (!agent.categorySkills) agent.categorySkills = [];
+            if (!agent.categorySkills.includes(skill.skillName)) {
+              agent.categorySkills.push(skill.skillName);
+            }
+          }
+          
+          await this.agentRepository.save(agent);
+          
+          // Return true - skill was re-added
+          return true;
+        } else {
+          this.logger.log(`Skill ${skill.skillName} already approved and active for ${agent.email}, skipping`);
+          // Return false - skill was not created/updated
+          return false;
+        }
       }
     }
   }
@@ -441,8 +492,14 @@ export class SkillDetectionService {
 
       // Add to agent's skills
       const agent = skill.agent;
+      if (!agent.skills) agent.skills = [];
       if (!agent.categorySkills) agent.categorySkills = [];
       if (!agent.autoDetectedSkills) agent.autoDetectedSkills = [];
+      
+      // Add to main skills array
+      if (!agent.skills.includes(skill.skillName)) {
+        agent.skills.push(skill.skillName);
+      }
       
       if (skill.skillType === SkillType.CATEGORY) {
         if (!agent.categorySkills.includes(skill.skillName)) {

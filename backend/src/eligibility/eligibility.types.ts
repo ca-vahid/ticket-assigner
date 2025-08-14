@@ -6,7 +6,12 @@ export interface EligibilityContext {
   requiredSkills?: string[];
   minLevel?: string;
   requiresOnsite: boolean;
-  location?: string;
+  location?: string; // Legacy field
+  locationId?: string; // New location entity ID
+  allowCrossLocation?: boolean;
+  allowRemoteAgents?: boolean;
+  preferredTimezone?: string;
+  isUrgent?: boolean;
   checkPTO: boolean;
   ptoAgentIds?: string[];
   preferredTimezones?: string[];
@@ -14,6 +19,7 @@ export interface EligibilityContext {
   minExperience?: number;
   minSatisfactionScore?: number;
   requireSpecialization?: boolean;
+  maxTimezoneHoursDifference?: number;
 }
 
 export interface EligibilityResult {

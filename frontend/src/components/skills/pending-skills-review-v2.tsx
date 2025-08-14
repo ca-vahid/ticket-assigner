@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -30,9 +31,11 @@ interface PendingSkillsReviewProps {
     byMethod: Record<string, number>;
   };
   onUpdate: () => void;
+  filterAgent?: { id: string; name: string } | null;
 }
 
-export function PendingSkillsReviewV2({ pendingSkills, onUpdate }: PendingSkillsReviewProps) {
+export function PendingSkillsReviewV2({ pendingSkills, onUpdate, filterAgent }: PendingSkillsReviewProps) {
+  const queryClient = useQueryClient();
   const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set());
   const [selectedAgents, setSelectedAgents] = useState<Set<string>>(new Set());
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set());
@@ -40,13 +43,32 @@ export function PendingSkillsReviewV2({ pendingSkills, onUpdate }: PendingSkills
   const [processing, setProcessing] = useState(false);
   const [showOnlySelected, setShowOnlySelected] = useState(false);
   
-  // Auto-expand if there are 3 or fewer agents
+  // Auto-expand if there are 3 or fewer agents or if filtering
   useEffect(() => {
     const agentCount = Object.keys(pendingSkills.byAgent || {}).length;
-    if (agentCount > 0 && agentCount <= 3 && expandedAgents.size === 0) {
+    
+    // If filtering for a specific agent
+    if (filterAgent) {
+      const filteredAgentId = Object.keys(pendingSkills.byAgent || {}).find(
+        agentId => pendingSkills.byAgent[agentId].agentName === filterAgent.name
+      );
+      
+      if (filteredAgentId) {
+        // Expand only the filtered agent
+        setExpandedAgents(new Set([filteredAgentId]));
+        
+        // Auto-select all skills for the filtered agent
+        const agent = pendingSkills.byAgent[filteredAgentId];
+        if (agent && agent.skills) {
+          const skillIds = agent.skills.map(s => s.id);
+          setSelectedSkills(new Set(skillIds));
+          setSelectedAgents(new Set([filteredAgentId]));
+        }
+      }
+    } else if (agentCount > 0 && agentCount <= 3 && expandedAgents.size === 0) {
       setExpandedAgents(new Set(Object.keys(pendingSkills.byAgent)));
     }
-  }, [pendingSkills.byAgent]);
+  }, [pendingSkills.byAgent, filterAgent]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -166,6 +188,11 @@ export function PendingSkillsReviewV2({ pendingSkills, onUpdate }: PendingSkills
       if (response.ok) {
         setSelectedSkills(new Set());
         setSelectedAgents(new Set());
+        
+        // Invalidate agents cache so the agents page shows updated skills
+        await queryClient.invalidateQueries({ queryKey: ['agents'] });
+        
+        // Also update the current page
         onUpdate();
       }
     } catch (error) {
@@ -194,6 +221,11 @@ export function PendingSkillsReviewV2({ pendingSkills, onUpdate }: PendingSkills
         setSelectedSkills(new Set());
         setSelectedAgents(new Set());
         setRejectReason('');
+        
+        // Invalidate agents cache in case any cached data needs updating
+        await queryClient.invalidateQueries({ queryKey: ['agents'] });
+        
+        // Also update the current page
         onUpdate();
       }
     } catch (error) {
@@ -209,7 +241,7 @@ export function PendingSkillsReviewV2({ pendingSkills, onUpdate }: PendingSkills
     return '🔴';
   };
 
-  if (pendingSkills.total === 0) {
+  if (pendingSkills.total === 0 || !pendingSkills.byAgent) {
     return (
       <Card>
         <CardContent className="pt-6">
@@ -225,11 +257,19 @@ export function PendingSkillsReviewV2({ pendingSkills, onUpdate }: PendingSkills
     );
   }
 
-  const agents = Object.entries(pendingSkills.byAgent);
+  let agents = Object.entries(pendingSkills.byAgent || {});
+  
+  // Apply agent filter if provided
+  if (filterAgent) {
+    agents = agents.filter(([agentId, agent]) => 
+      agent.agentName === filterAgent.name
+    );
+  }
+  
   const filteredAgents = showOnlySelected 
     ? agents.filter(([agentId]) => {
-        const agent = pendingSkills.byAgent[agentId];
-        return agent.skills.some(skill => selectedSkills.has(skill.id));
+        const agent = pendingSkills.byAgent?.[agentId];
+        return agent?.skills?.some(skill => selectedSkills.has(skill.id)) || false;
       })
     : agents;
 
@@ -468,6 +508,8 @@ export function PendingSkillsReviewV2({ pendingSkills, onUpdate }: PendingSkills
                             })
                           });
                           if (response.ok) {
+                            // Invalidate agents cache so the agents page shows updated skills
+                            await queryClient.invalidateQueries({ queryKey: ['agents'] });
                             onUpdate();
                           }
                         } finally {

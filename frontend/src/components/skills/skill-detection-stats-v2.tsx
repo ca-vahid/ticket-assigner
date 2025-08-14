@@ -27,13 +27,21 @@ interface SkillDetectionStatsProps {
 }
 
 export function SkillDetectionStatsV2({ stats, isRefreshing = false }: SkillDetectionStatsProps) {
+  // Provide default values if stats or detectedSkills is undefined
+  const detectedSkills = stats?.detectedSkills || {
+    total: 0,
+    pending: 0,
+    approved: 0,
+    rejected: 0
+  };
+
   const getPercentage = (value: number, total: number) => {
     if (total === 0) return 0;
     return Math.round((value / total) * 100);
   };
 
-  const approvalRate = stats.detectedSkills.total > 0 
-    ? getPercentage(stats.detectedSkills.approved, stats.detectedSkills.approved + stats.detectedSkills.rejected)
+  const approvalRate = detectedSkills.total > 0 
+    ? getPercentage(detectedSkills.approved, detectedSkills.approved + detectedSkills.rejected)
     : 0;
 
   return (
@@ -44,7 +52,7 @@ export function SkillDetectionStatsV2({ stats, isRefreshing = false }: SkillDete
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs text-blue-600 font-medium">Total Detected</p>
-              <p className="text-2xl font-bold text-blue-800">{stats.detectedSkills.total}</p>
+              <p className="text-2xl font-bold text-blue-800">{detectedSkills.total}</p>
             </div>
             <Brain className="h-8 w-8 text-blue-500 opacity-50" />
           </div>
@@ -57,13 +65,13 @@ export function SkillDetectionStatsV2({ stats, isRefreshing = false }: SkillDete
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs text-orange-600 font-medium">Pending Review</p>
-              <p className="text-2xl font-bold text-orange-800">{stats.detectedSkills.pending}</p>
+              <p className="text-2xl font-bold text-orange-800">{detectedSkills.pending}</p>
             </div>
             <Clock className="h-8 w-8 text-orange-500 opacity-50" />
           </div>
-          {stats.detectedSkills.pending > 0 && (
+          {detectedSkills.pending > 0 && (
             <Badge className="mt-1 text-xs bg-orange-600">
-              {getPercentage(stats.detectedSkills.pending, stats.detectedSkills.total)}% of total
+              {getPercentage(detectedSkills.pending, detectedSkills.total)}% of total
             </Badge>
           )}
         </CardContent>
@@ -75,13 +83,13 @@ export function SkillDetectionStatsV2({ stats, isRefreshing = false }: SkillDete
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs text-green-600 font-medium">Approved</p>
-              <p className="text-2xl font-bold text-green-800">{stats.detectedSkills.approved}</p>
+              <p className="text-2xl font-bold text-green-800">{detectedSkills.approved}</p>
             </div>
             <CheckCircle className="h-8 w-8 text-green-500 opacity-50" />
           </div>
-          {stats.detectedSkills.approved > 0 && (
+          {detectedSkills.approved > 0 && (
             <Badge className="mt-1 text-xs bg-green-600">
-              {getPercentage(stats.detectedSkills.approved, stats.detectedSkills.total)}% of total
+              {getPercentage(detectedSkills.approved, detectedSkills.total)}% of total
             </Badge>
           )}
         </CardContent>
@@ -93,7 +101,7 @@ export function SkillDetectionStatsV2({ stats, isRefreshing = false }: SkillDete
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs text-red-600 font-medium">Rejected</p>
-              <p className="text-2xl font-bold text-red-800">{stats.detectedSkills.rejected}</p>
+              <p className="text-2xl font-bold text-red-800">{detectedSkills.rejected}</p>
             </div>
             <XCircle className="h-8 w-8 text-red-500 opacity-50" />
           </div>
@@ -114,13 +122,13 @@ export function SkillDetectionStatsV2({ stats, isRefreshing = false }: SkillDete
       </Card>
 
       {/* Agents Processed */}
-      {stats.agentsProcessed !== undefined && (
+      {stats?.agentsProcessed !== undefined && (
         <Card className="bg-gradient-to-br from-indigo-50 to-indigo-100 border-indigo-200">
           <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs text-indigo-600 font-medium">Agents</p>
-                <p className="text-2xl font-bold text-indigo-800">{stats.agentsProcessed}</p>
+                <p className="text-2xl font-bold text-indigo-800">{stats?.agentsProcessed || 0}</p>
               </div>
               <Users className="h-8 w-8 text-indigo-500 opacity-50" />
             </div>

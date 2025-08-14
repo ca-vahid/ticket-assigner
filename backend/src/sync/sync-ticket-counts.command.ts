@@ -88,7 +88,7 @@ export class SyncTicketCountsCommand {
           }
         }
         
-        const workload = this.workloadCalculator.calculateAgentWorkload(
+        const workload = await this.workloadCalculator.calculateAgentWorkload(
           agent.id,
           agentTickets
         );

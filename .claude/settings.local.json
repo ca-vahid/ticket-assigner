@@ -35,7 +35,9 @@
       "Bash(DATABASE_SSL=true npx dotenv -e .env -- npm run migration:run)",
       "Bash(npm run sync:tickets:*)",
       "Bash(npm run:*)",
-      "Bash(npx:*)"
+      "Bash(npx:*)",
+      "Bash(sed:*)",
+      "Bash(mv:*)"
     ],
     "deny": []
   }

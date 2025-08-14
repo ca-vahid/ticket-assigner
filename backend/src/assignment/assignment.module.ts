@@ -6,13 +6,14 @@ import { Agent } from '../database/entities/agent.entity';
 import { Decision } from '../database/entities/decision.entity';
 import { Category } from '../database/entities/category.entity';
 import { Settings } from '../database/entities/settings.entity';
+import { Location } from '../database/entities/location.entity';
 import { EligibilityModule } from '../eligibility/eligibility.module';
 import { ScoringModule } from '../scoring/scoring.module';
 import { FreshserviceModule } from '../integrations/freshservice/freshservice.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Agent, Decision, Category, Settings]),
+    TypeOrmModule.forFeature([Agent, Decision, Category, Settings, Location]),
     EligibilityModule,
     ScoringModule,
     FreshserviceModule

@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, Param, Query, Put } from '@nestjs/common';
+import { Controller, Post, Body, Get, Param, Query, Put, Delete } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AssignmentService } from './assignment.service';
 import type { 
@@ -55,6 +55,32 @@ export class AssignmentController {
   @ApiResponse({ status: 200, description: 'Settings reloaded' })
   async reloadSettings(): Promise<{ success: boolean }> {
     await this.assignmentService.loadSettings();
+    return { success: true };
+  }
+
+  @Delete('history/old')
+  @ApiOperation({ summary: 'Delete old assignment history' })
+  @ApiResponse({ status: 200, description: 'Old assignments deleted' })
+  async deleteOldAssignments(
+    @Query('days') days: number = 90
+  ): Promise<{ success: boolean; deleted: number }> {
+    const deleted = await this.assignmentService.deleteOldAssignments(days);
+    return { success: true, deleted };
+  }
+
+  @Delete('history/all')
+  @ApiOperation({ summary: 'Delete all assignment history' })
+  @ApiResponse({ status: 200, description: 'All assignments deleted' })
+  async deleteAllAssignments(): Promise<{ success: boolean; deleted: number }> {
+    const deleted = await this.assignmentService.deleteAllAssignments();
+    return { success: true, deleted };
+  }
+
+  @Delete('history/:id')
+  @ApiOperation({ summary: 'Delete a specific assignment' })
+  @ApiResponse({ status: 200, description: 'Assignment deleted' })
+  async deleteAssignment(@Param('id') id: string): Promise<{ success: boolean }> {
+    await this.assignmentService.deleteAssignment(id);
     return { success: true };
   }
 }

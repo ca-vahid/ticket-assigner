@@ -66,6 +66,14 @@ export function DashboardV2() {
   const { assignmentHistory } = useAssignments()
   const [refreshing, setRefreshing] = useState(false)
   const [timeRange, setTimeRange] = useState('7d') // 7d, 30d, 90d
+  
+  // Debug logging
+  useEffect(() => {
+    console.log('Assignment History:', assignmentHistory)
+    if (assignmentHistory.data) {
+      console.log('Sample assignment:', assignmentHistory.data[0])
+    }
+  }, [assignmentHistory])
 
   // Calculate real metrics
   const availableAgents = agents.filter(a => a.isAvailable).length
@@ -83,10 +91,40 @@ export function DashboardV2() {
   const autoAssignments = recentAssignments.filter(a => a.type === 'AUTO').length
   const manualAssignments = recentAssignments.filter(a => a.type === 'MANUAL').length
   
-  // Calculate average scores
-  const avgScore = recentAssignments.length > 0
-    ? (recentAssignments.reduce((acc, a) => acc + (a.score || 0), 0) / recentAssignments.length * 100).toFixed(1)
-    : 0
+  // Calculate average scores (scores are 0-1, convert to percentage)
+  const calculateAvgScore = () => {
+    try {
+      if (!recentAssignments || recentAssignments.length === 0) return '0'
+      
+      // Filter assignments that have valid scores
+      const assignmentsWithScores = recentAssignments.filter(a => 
+        a.score !== null && 
+        a.score !== undefined && 
+        typeof a.score === 'number' &&
+        !isNaN(a.score) &&
+        isFinite(a.score)
+      )
+      
+      if (assignmentsWithScores.length === 0) return '0'
+      
+      const totalScore = assignmentsWithScores.reduce((acc, a) => {
+        // Ensure score is between 0 and 1, if it's already a percentage, divide by 100
+        const score = a.score > 1 ? a.score / 100 : a.score
+        return acc + score
+      }, 0)
+      
+      const avg = (totalScore / assignmentsWithScores.length) * 100
+      
+      // Final validation
+      if (isNaN(avg) || !isFinite(avg)) return '0'
+      
+      return Math.min(100, Math.max(0, avg)).toFixed(1)
+    } catch (error) {
+      console.error('Error calculating average score:', error)
+      return '0'
+    }
+  }
+  const avgScore = calculateAvgScore()
 
   // Workload distribution data
   const workloadData = [
@@ -197,10 +235,16 @@ export function DashboardV2() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{avgScore}%</div>
+              <div className="text-2xl font-bold">{avgScore === '0' ? 'N/A' : `${avgScore}%`}</div>
               <div className="flex items-center text-xs text-muted-foreground mt-1">
-                <TrendingUp className="h-3 w-3 text-green-500 mr-1" />
-                <span className="text-green-600">+2.3%</span> from last week
+                {avgScore !== '0' ? (
+                  <>
+                    <TrendingUp className="h-3 w-3 text-green-500 mr-1" />
+                    <span className="text-green-600">+2.3%</span> from last week
+                  </>
+                ) : (
+                  <span>No data available</span>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -215,9 +259,9 @@ export function DashboardV2() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
-                {recentAssignments.length > 0 
-                  ? `${((autoAssignments / recentAssignments.length) * 100).toFixed(0)}%`
-                  : '0%'
+                {recentAssignments && recentAssignments.length > 0 
+                  ? `${Math.round((autoAssignments / recentAssignments.length) * 100)}%`
+                  : 'N/A'
                 }
               </div>
               <div className="flex items-center text-xs text-muted-foreground mt-1">

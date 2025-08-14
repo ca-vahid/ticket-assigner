@@ -2,6 +2,7 @@ import {
   Controller, 
   Get, 
   Put, 
+  Delete,
   Param, 
   Body, 
   Query,
@@ -29,7 +30,8 @@ export class AgentsController {
     @Query('level') level?: string,
     @Query('skill') skill?: string
   ): Promise<Agent[]> {
-    const query = this.agentRepository.createQueryBuilder('agent');
+    const query = this.agentRepository.createQueryBuilder('agent')
+      .leftJoinAndSelect('agent.location', 'location');
     
     if (available !== undefined) {
       query.andWhere('agent.is_available = :available', { available });
@@ -44,6 +46,47 @@ export class AgentsController {
     }
     
     return query.orderBy('agent.first_name', 'ASC').getMany();
+  }
+
+  @Delete('inactive/all')
+  @ApiOperation({ summary: 'Delete all inactive agents' })
+  @ApiResponse({ status: 200, description: 'Inactive agents deleted' })
+  async deleteInactiveAgents(): Promise<{ success: boolean; deleted: number }> {
+    const result = await this.agentRepository
+      .createQueryBuilder()
+      .delete()
+      .where('is_available = false')
+      .execute();
+    
+    return { success: true, deleted: result.affected || 0 };
+  }
+
+  @Delete('skills/detected')
+  @ApiOperation({ summary: 'Clear all detected skills for all agents' })
+  @ApiResponse({ status: 200, description: 'Detected skills cleared' })
+  async clearAllDetectedSkills(): Promise<{ success: boolean; affected: number }> {
+    const agents = await this.agentRepository.find();
+    let affected = 0;
+    
+    for (const agent of agents) {
+      if (agent.autoDetectedSkills && agent.autoDetectedSkills.length > 0) {
+        // Remove detected skills from main skills array
+        agent.skills = agent.skills.filter(skill => 
+          !agent.autoDetectedSkills.includes(skill)
+        );
+        agent.autoDetectedSkills = [];
+        
+        // Clear category metadata
+        if (agent.skillMetadata?.category) {
+          delete agent.skillMetadata.category;
+        }
+        
+        await this.agentRepository.save(agent);
+        affected++;
+      }
+    }
+    
+    return { success: true, affected };
   }
 
   @Get(':id')
@@ -66,19 +109,33 @@ export class AgentsController {
     @Param('id') id: string,
     @Body() updates: Partial<Agent>
   ): Promise<Agent> {
-    const agent = await this.agentRepository.findOne({ where: { id } });
+    const agent = await this.agentRepository.findOne({ 
+      where: { id },
+      relations: ['location']
+    });
     
     if (!agent) {
       throw new HttpException('Agent not found', HttpStatus.NOT_FOUND);
     }
     
     // Only allow updating certain fields
-    const allowedUpdates = ['isAvailable', 'skills', 'level', 'maxConcurrentTickets'];
+    const allowedUpdates = ['isAvailable', 'skills', 'level', 'maxConcurrentTickets', 'location'];
     const filteredUpdates: any = {};
     
     for (const key of allowedUpdates) {
       if (key in updates) {
         filteredUpdates[key] = updates[key as keyof Agent];
+      }
+    }
+    
+    // If isAvailable is being manually changed, track it
+    if ('isAvailable' in filteredUpdates) {
+      // If manually deactivating, set the flag
+      if (!filteredUpdates.isAvailable) {
+        filteredUpdates.manuallyDeactivated = true;
+      } else {
+        // If manually reactivating, clear the flag
+        filteredUpdates.manuallyDeactivated = false;
       }
     }
     
@@ -106,5 +163,35 @@ export class AgentsController {
       isAvailable: agent.isAvailable,
       isPto: agent.isPto
     };
+  }
+
+  @Put(':id/clear-skills')
+  @ApiOperation({ summary: 'Clear all skills for an agent' })
+  @ApiResponse({ status: 200, description: 'Skills cleared' })
+  async clearAgentSkills(@Param('id') id: string): Promise<Agent> {
+    const agent = await this.agentRepository.findOne({ where: { id } });
+    
+    if (!agent) {
+      throw new HttpException('Agent not found', HttpStatus.NOT_FOUND);
+    }
+    
+    agent.skills = [];
+    agent.autoDetectedSkills = [];
+    agent.skillMetadata = {};
+    
+    return this.agentRepository.save(agent);
+  }
+
+  @Delete(':id')
+  @ApiOperation({ summary: 'Delete an agent' })
+  @ApiResponse({ status: 200, description: 'Agent deleted' })
+  async deleteAgent(@Param('id') id: string): Promise<{ success: boolean }> {
+    const result = await this.agentRepository.delete(id);
+    
+    if (result.affected === 0) {
+      throw new HttpException('Agent not found', HttpStatus.NOT_FOUND);
+    }
+    
+    return { success: true };
   }
 }

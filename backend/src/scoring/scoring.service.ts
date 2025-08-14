@@ -138,23 +138,79 @@ export class ScoringService {
   }
 
   private calculateLocationScore(agent: Agent, ticket: TicketContext): number {
-    // If ticket doesn't require onsite, location doesn't matter
-    if (!ticket.requiresOnsite) {
+    // If ticket doesn't require onsite and agent is remote, perfect match
+    if (!ticket.requiresOnsite && agent.isRemote) {
       return 1.0;
     }
 
-    // If ticket requires onsite
-    if (agent.location) {
-      // Check if agent is in the right location
-      if (ticket.location && agent.location === ticket.location) {
-        return 1.0;
-      }
-      // Agent has a location but different from ticket
-      return 0.5;
+    // If ticket doesn't require onsite, location doesn't matter much
+    if (!ticket.requiresOnsite) {
+      return 0.9; // Slight preference for remote agents for remote tickets
     }
 
-    // Agent has no location set but ticket requires onsite
-    return 0;
+    // Ticket requires onsite support
+    if (ticket.requiresOnsite) {
+      // Agent must have a location for onsite work
+      if (!agent.location) {
+        return 0; // No location = can't do onsite
+      }
+
+      // Check if agent location supports onsite
+      const supportsOnsite = agent.location.metadata?.supportTypes?.includes('onsite') ?? true;
+      if (!supportsOnsite) {
+        return 0.1; // Location doesn't support onsite
+      }
+
+      // Perfect match: same location
+      if (ticket.locationId && agent.location.id === ticket.locationId) {
+        return 1.0;
+      }
+
+      // Good match: same timezone (can potentially travel or provide urgent support)
+      if (ticket.timezone && agent.location.timezone === ticket.timezone) {
+        return 0.7;
+      }
+
+      // Calculate timezone difference for cross-timezone support
+      if (ticket.timezone && agent.location.timezone) {
+        const timezoneScore = this.calculateTimezoneScore(
+          agent.location.timezone,
+          ticket.timezone
+        );
+        return Math.max(0.2, timezoneScore * 0.5); // Min 0.2, max 0.5 for different locations
+      }
+
+      // Different location, no timezone info
+      return 0.3;
+    }
+
+    // Default neutral score
+    return 0.5;
+  }
+
+  private calculateTimezoneScore(agentTz: string, ticketTz: string): number {
+    // Simple timezone scoring - in production, use proper timezone library
+    // For now, return 1.0 for same timezone, 0.5 for different
+    if (agentTz === ticketTz) return 1.0;
+    
+    // Common timezone groups (simplified)
+    const timezoneGroups = {
+      americas: ['America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 
+                 'America/Vancouver', 'America/Toronto', 'America/Montreal'],
+      europe: ['Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Madrid', 'Europe/Rome'],
+      asia: ['Asia/Tokyo', 'Asia/Shanghai', 'Asia/Singapore', 'Asia/Mumbai', 'Asia/Dubai'],
+      pacific: ['Pacific/Auckland', 'Australia/Sydney', 'Australia/Melbourne']
+    };
+
+    // Check if in same region
+    for (const [region, zones] of Object.entries(timezoneGroups)) {
+      if (zones.includes(agentTz) && zones.includes(ticketTz)) {
+        return 0.7; // Same region
+      }
+    }
+
+    // Different regions
+    return 0.3;
   }
 
   private calculateVipScore(agent: Agent, ticket: TicketContext): number {

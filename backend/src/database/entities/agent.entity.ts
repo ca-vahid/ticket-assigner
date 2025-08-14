@@ -1,6 +1,7 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, OneToMany, ManyToMany, JoinTable } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, OneToMany, ManyToMany, JoinTable, ManyToOne, JoinColumn } from 'typeorm';
 import { Decision } from './decision.entity';
 import { Category } from './category.entity';
+import { Location } from './location.entity';
 
 export enum AgentLevel {
   L1 = 'L1',
@@ -41,6 +42,9 @@ export class Agent {
   @Column({ name: 'is_available', default: true })
   isAvailable: boolean;
 
+  @Column({ name: 'manually_deactivated', default: false })
+  manuallyDeactivated: boolean;
+
   @Column('text', { array: true, nullable: true })
   skills: string[];
 
@@ -59,11 +63,15 @@ export class Agent {
     llm?: { skill: string; confidence: number; reasoning?: string }[];
   };
 
-  @Column({ nullable: true })
-  location: string;
+  @ManyToOne(() => Location, location => location.agents, { eager: true })
+  @JoinColumn({ name: 'location_id' })
+  location?: Location;
 
   @Column({ nullable: true })
   timezone: string;
+
+  @Column({ name: 'is_remote', default: false })
+  isRemote: boolean;
 
   @Column({ name: 'current_ticket_count', default: 0 })
   currentTicketCount: number;
