@@ -3,10 +3,12 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagg
 import { ScoringService } from './scoring.service';
 import type { ScoringWeights, TicketContext } from './scoring.types';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, Between } from 'typeorm';
 import { Settings } from '../database/entities/settings.entity';
 import { Agent, AgentLevel } from '../database/entities/agent.entity';
 import { Location } from '../database/entities/location.entity';
+import { Decision, DecisionType } from '../database/entities/decision.entity';
+import { subDays, format } from 'date-fns';
 
 @ApiTags('scoring')
 @Controller('api/scoring')
@@ -19,6 +21,8 @@ export class ScoringController {
     private agentRepository: Repository<Agent>,
     @InjectRepository(Location)
     private locationRepository: Repository<Location>,
+    @InjectRepository(Decision)
+    private decisionRepository: Repository<Decision>,
   ) {}
 
   @Get('weights')
@@ -234,6 +238,101 @@ export class ScoringController {
       eligibleAgents: eligibleResults.length,
       averageScore: Math.round(averageScore * 100) / 100,
       scoreDistribution: distribution
+    };
+  }
+
+  @Get('analytics')
+  @ApiOperation({ summary: 'Get scoring analytics data' })
+  @ApiResponse({ status: 200, description: 'Scoring analytics data' })
+  async getAnalytics(): Promise<{
+    scoreDistribution: { range: string; count: number; color: string }[];
+    scoringHistory: { date: string; avgScore: number; assignments: number }[];
+    metrics: {
+      avgScore: number;
+      highScorePercentage: number;
+      lowScorePercentage: number;
+      autoAssignRate: number;
+      totalAssignments: number;
+    };
+  }> {
+    // Get decisions from the last 7 days
+    const sevenDaysAgo = subDays(new Date(), 7);
+    const decisions = await this.decisionRepository.find({
+      where: {
+        createdAt: Between(sevenDaysAgo, new Date())
+      },
+      order: { createdAt: 'DESC' }
+    });
+
+    // Calculate score distribution
+    const distribution = [
+      { range: '0-20', count: 0, color: '#ef4444' },
+      { range: '21-40', count: 0, color: '#f59e0b' },
+      { range: '41-60', count: 0, color: '#eab308' },
+      { range: '61-80', count: 0, color: '#84cc16' },
+      { range: '81-100', count: 0, color: '#10b981' }
+    ];
+
+    decisions.forEach(decision => {
+      const score = Math.round(decision.score * 100);
+      if (score <= 20) distribution[0].count++;
+      else if (score <= 40) distribution[1].count++;
+      else if (score <= 60) distribution[2].count++;
+      else if (score <= 80) distribution[3].count++;
+      else distribution[4].count++;
+    });
+
+    // Calculate daily averages for the last 7 days
+    const dailyData: { [key: string]: { totalScore: number; count: number } } = {};
+    const today = new Date();
+    
+    // Initialize all days with 0
+    for (let i = 6; i >= 0; i--) {
+      const date = subDays(today, i);
+      const key = format(date, 'EEE');
+      dailyData[key] = { totalScore: 0, count: 0 };
+    }
+
+    // Aggregate decision data by day
+    decisions.forEach(decision => {
+      const dayKey = format(decision.createdAt, 'EEE');
+      if (dailyData[dayKey]) {
+        dailyData[dayKey].totalScore += decision.score * 100;
+        dailyData[dayKey].count++;
+      }
+    });
+
+    // Convert to array format for chart
+    const scoringHistory = Object.entries(dailyData).map(([date, data]) => ({
+      date,
+      avgScore: data.count > 0 ? Math.round(data.totalScore / data.count) : 0,
+      assignments: data.count
+    }));
+
+    // Calculate metrics
+    const totalScore = decisions.reduce((sum, d) => sum + (d.score * 100), 0);
+    const avgScore = decisions.length > 0 ? totalScore / decisions.length : 0;
+    
+    const highScores = decisions.filter(d => d.score > 0.8).length;
+    const lowScores = decisions.filter(d => d.score < 0.4).length;
+    const autoAssigned = decisions.filter(d => d.type === DecisionType.AUTO_ASSIGNED).length;
+
+    return {
+      scoreDistribution: distribution,
+      scoringHistory,
+      metrics: {
+        avgScore: Math.round(avgScore * 10) / 10,
+        highScorePercentage: decisions.length > 0 
+          ? Math.round((highScores / decisions.length) * 100) 
+          : 0,
+        lowScorePercentage: decisions.length > 0 
+          ? Math.round((lowScores / decisions.length) * 100) 
+          : 0,
+        autoAssignRate: decisions.length > 0 
+          ? Math.round((autoAssigned / decisions.length) * 100) 
+          : 0,
+        totalAssignments: decisions.length
+      }
     };
   }
 }

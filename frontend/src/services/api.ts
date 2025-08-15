@@ -109,6 +109,10 @@ class ApiService {
     return this.api.post('/api/scoring/test-scenario', scenario)
   }
 
+  async getScoringAnalytics() {
+    return this.api.get('/api/scoring/analytics')
+  }
+
   async testAssignmentScenario(scenario: {
     skills: string[];
     level: string;

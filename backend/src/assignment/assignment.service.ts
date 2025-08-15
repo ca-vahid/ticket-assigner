@@ -108,8 +108,8 @@ export class AssignmentService {
         categoryId: category?.id,
         requiredSkills: category?.requiredSkills || [],
         minLevel: category?.priorityLevel,
-        requiresOnsite: false,
-        location: request.location,
+        requiresOnsite: ticketContext.requiresOnsite,  // Use the properly determined value from context
+        locationId: ticketContext.locationId,  // Use locationId from context (consistent field name)
         checkPTO: true,
         ptoAgentIds: request.ptoAgentIds || [],
         maxLoadPercentage: 0.9,

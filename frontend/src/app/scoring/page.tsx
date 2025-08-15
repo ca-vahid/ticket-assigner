@@ -160,16 +160,18 @@ export default function ScoringPage() {
   const [availableLocations, setAvailableLocations] = useState<{ id: string; name: string; timezone?: string }[]>([])
   const [testResults, setTestResults] = useState<any>(null)
   const [testingScenario, setTestingScenario] = useState(false)
-
-  const [scoringHistory] = useState([
-    { date: 'Mon', avgScore: 82, assignments: 45 },
-    { date: 'Tue', avgScore: 85, assignments: 52 },
-    { date: 'Wed', avgScore: 79, assignments: 48 },
-    { date: 'Thu', avgScore: 88, assignments: 61 },
-    { date: 'Fri', avgScore: 86, assignments: 55 },
-    { date: 'Sat', avgScore: 91, assignments: 32 },
-    { date: 'Sun', avgScore: 89, assignments: 28 }
-  ])
+  const [analyticsData, setAnalyticsData] = useState<{
+    scoreDistribution: { range: string; count: number; color: string }[];
+    scoringHistory: { date: string; avgScore: number; assignments: number }[];
+    metrics: {
+      avgScore: number;
+      highScorePercentage: number;
+      lowScorePercentage: number;
+      autoAssignRate: number;
+      totalAssignments: number;
+    };
+  } | null>(null)
+  const [loadingAnalytics, setLoadingAnalytics] = useState(false)
 
   const [hasChanges, setHasChanges] = useState(false)
   const [hasTicketAgeChanges, setHasTicketAgeChanges] = useState(false)
@@ -179,6 +181,7 @@ export default function ScoringPage() {
   useEffect(() => {
     loadWeights()
     loadAvailableData()
+    loadAnalyticsData()
   }, [])
 
   const loadWeights = async () => {
@@ -236,6 +239,20 @@ export default function ScoringPage() {
       }
     } catch (error) {
       console.error('Failed to load available data:', error)
+    }
+  }
+  
+  const loadAnalyticsData = async () => {
+    setLoadingAnalytics(true)
+    try {
+      const response = await apiService.getScoringAnalytics()
+      if (response.data) {
+        setAnalyticsData(response.data)
+      }
+    } catch (error) {
+      console.error('Failed to load analytics data:', error)
+    } finally {
+      setLoadingAnalytics(false)
     }
   }
   
@@ -348,14 +365,6 @@ export default function ScoringPage() {
   }
 
   const totalWeight = weights.reduce((sum, w) => sum + w.value, 0)
-
-  const scoreDistribution = [
-    { range: '0-20', count: 5, color: '#ef4444' },
-    { range: '21-40', count: 12, color: '#f59e0b' },
-    { range: '41-60', count: 28, color: '#eab308' },
-    { range: '61-80', count: 45, color: '#84cc16' },
-    { range: '81-100', count: 65, color: '#10b981' }
-  ]
 
   const radarData = weights.map(w => ({
     subject: w.name,
@@ -1026,104 +1035,184 @@ export default function ScoringPage() {
           </TabsContent>
 
           <TabsContent value="analytics" className="space-y-6">
-            <div className="grid gap-6 lg:grid-cols-2">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Score Distribution</CardTitle>
-                  <CardDescription>
-                    Distribution of assignment scores over the past week
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <ResponsiveContainer width="100%" height={300}>
-                    <BarChart data={scoreDistribution}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="range" />
-                      <YAxis />
-                      <Tooltip />
-                      <Bar dataKey="count">
-                        {scoreDistribution.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.color} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </CardContent>
-              </Card>
+            {loadingAnalytics ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-center">
+                  <div className="animate-spin h-8 w-8 border-b-2 border-blue-600 rounded-full mx-auto mb-4"></div>
+                  <p className="text-muted-foreground">Loading analytics data...</p>
+                </div>
+              </div>
+            ) : analyticsData ? (
+              <>
+                <div className="grid gap-6 lg:grid-cols-2">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Score Distribution</CardTitle>
+                      <CardDescription>
+                        Distribution of assignment scores over the past 7 days
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      {analyticsData.metrics.totalAssignments > 0 ? (
+                        <ResponsiveContainer width="100%" height={300}>
+                          <BarChart data={analyticsData.scoreDistribution}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="range" />
+                            <YAxis />
+                            <Tooltip />
+                            <Bar dataKey="count">
+                              {analyticsData.scoreDistribution.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={entry.color} />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div className="flex items-center justify-center h-[300px] text-muted-foreground">
+                          <div className="text-center">
+                            <BarChart3 className="h-12 w-12 mx-auto mb-2 opacity-20" />
+                            <p>No assignment data available</p>
+                            <p className="text-xs mt-1">Scores will appear here once assignments are made</p>
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>Average Score Trend</CardTitle>
-                  <CardDescription>
-                    Daily average assignment scores
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <ResponsiveContainer width="100%" height={300}>
-                    <LineChart data={scoringHistory}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="date" />
-                      <YAxis domain={[70, 100]} />
-                      <Tooltip />
-                      <Line
-                        type="monotone"
-                        dataKey="avgScore"
-                        stroke="#3b82f6"
-                        strokeWidth={2}
-                        dot={{ fill: '#3b82f6' }}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </CardContent>
-              </Card>
-            </div>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Average Score Trend</CardTitle>
+                      <CardDescription>
+                        Daily average assignment scores
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      {analyticsData.metrics.totalAssignments > 0 ? (
+                        <ResponsiveContainer width="100%" height={300}>
+                          <LineChart data={analyticsData.scoringHistory}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="date" />
+                            <YAxis domain={[0, 100]} />
+                            <Tooltip />
+                            <Line
+                              type="monotone"
+                              dataKey="avgScore"
+                              stroke="#3b82f6"
+                              strokeWidth={2}
+                              dot={{ fill: '#3b82f6' }}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div className="flex items-center justify-center h-[300px] text-muted-foreground">
+                          <div className="text-center">
+                            <TrendingUp className="h-12 w-12 mx-auto mb-2 opacity-20" />
+                            <p>No trend data available</p>
+                            <p className="text-xs mt-1">Trends will appear after assignments are made</p>
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
 
-            <div className="grid gap-4 md:grid-cols-4">
-              <Card>
-                <CardContent className="pt-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Avg Score</p>
-                      <p className="text-2xl font-bold">85.7%</p>
-                    </div>
-                    <TrendingUp className="h-8 w-8 text-green-600 opacity-20" />
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="pt-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-muted-foreground">High Scores (&gt;80)</p>
-                      <p className="text-2xl font-bold">65%</p>
-                    </div>
-                    <Target className="h-8 w-8 text-blue-600 opacity-20" />
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="pt-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Low Scores (&lt;40)</p>
-                      <p className="text-2xl font-bold">8%</p>
-                    </div>
-                    <AlertCircle className="h-8 w-8 text-orange-600 opacity-20" />
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="pt-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Auto-Assign Rate</p>
-                      <p className="text-2xl font-bold">78%</p>
-                    </div>
-                    <Zap className="h-8 w-8 text-purple-600 opacity-20" />
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
+                <div className="grid gap-4 md:grid-cols-4">
+                  <Card>
+                    <CardContent className="pt-6">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm text-muted-foreground">Avg Score</p>
+                          <p className="text-2xl font-bold">
+                            {analyticsData.metrics.avgScore}%
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {analyticsData.metrics.totalAssignments} total
+                          </p>
+                        </div>
+                        <TrendingUp className="h-8 w-8 text-green-600 opacity-20" />
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-6">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm text-muted-foreground">High Scores (&gt;80)</p>
+                          <p className="text-2xl font-bold">
+                            {analyticsData.metrics.highScorePercentage}%
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            of assignments
+                          </p>
+                        </div>
+                        <Target className="h-8 w-8 text-blue-600 opacity-20" />
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-6">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm text-muted-foreground">Low Scores (&lt;40)</p>
+                          <p className="text-2xl font-bold">
+                            {analyticsData.metrics.lowScorePercentage}%
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            need review
+                          </p>
+                        </div>
+                        <AlertCircle className="h-8 w-8 text-orange-600 opacity-20" />
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-6">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm text-muted-foreground">Auto-Assign Rate</p>
+                          <p className="text-2xl font-bold">
+                            {analyticsData.metrics.autoAssignRate}%
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            automated
+                          </p>
+                        </div>
+                        <Zap className="h-8 w-8 text-purple-600 opacity-20" />
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Refresh button */}
+                <div className="flex justify-end">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={loadAnalyticsData}
+                    disabled={loadingAnalytics}
+                  >
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Refresh Analytics
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-center">
+                  <AlertCircle className="h-12 w-12 mx-auto mb-4 text-orange-500" />
+                  <p className="text-muted-foreground">Failed to load analytics data</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={loadAnalyticsData}
+                    className="mt-4"
+                  >
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Retry
+                  </Button>
+                </div>
+              </div>
+            )}
           </TabsContent>
 
         </Tabs>
