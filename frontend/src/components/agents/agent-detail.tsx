@@ -31,6 +31,11 @@ interface Agent {
   maxConcurrentTickets?: number;
   totalAssignments?: number;
   lastAssignmentDate?: string;
+  isPto?: boolean;
+  currentLeaveType?: string;
+  ptoStartDate?: string;
+  ptoEndDate?: string;
+  lastVacationTrackerSync?: string;
 }
 
 interface AgentDetailProps {

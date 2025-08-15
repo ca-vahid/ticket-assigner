@@ -20,6 +20,7 @@ import { SettingsModule } from './settings/settings.module';
 import { SkillsModule } from './skills/skills.module';
 import { AuditModule } from './audit/audit.module';
 import { LocationsModule } from './locations/locations.module';
+import { VacationTrackerModule } from './integrations/vacation-tracker/vacation-tracker.module';
 
 @Module({
   imports: [
@@ -56,6 +57,7 @@ import { LocationsModule } from './locations/locations.module';
     SkillsModule,
     AuditModule,
     LocationsModule,
+    VacationTrackerModule,
   ],
   controllers: [AppController],
   providers: [AppService],

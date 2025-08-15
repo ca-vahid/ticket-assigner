@@ -174,12 +174,37 @@ export default function EligibilityPage() {
     }
   }, [fetchedRules])
 
-  // Mock PTO data
-  const [ptoData] = useState([
-    { agentId: '1', agentName: 'John Doe', start: new Date(), end: addDays(new Date(), 3), type: 'vacation' },
-    { agentId: '2', agentName: 'Jane Smith', start: addDays(new Date(), 5), end: addDays(new Date(), 7), type: 'sick' },
-    { agentId: '3', agentName: 'Bob Wilson', start: addDays(new Date(), 10), end: addDays(new Date(), 14), type: 'vacation' }
-  ])
+  // Fetch real leave data
+  const { data: leaveData, isLoading: loadingLeaves } = useQuery({
+    queryKey: ['leaves', selectedWeek],
+    queryFn: async () => {
+      const start = startOfWeek(selectedWeek);
+      const end = addDays(start, 30);
+      const response = await apiService.getLeaves(
+        format(start, 'yyyy-MM-dd'),
+        format(end, 'yyyy-MM-dd')
+      );
+      return response.data.data;
+    }
+  });
+
+  // Fetch coverage analysis
+  const { data: coverageData, isLoading: loadingCoverage } = useQuery({
+    queryKey: ['coverage-analysis'],
+    queryFn: async () => {
+      const response = await apiService.getCoverageAnalysis(14);
+      return response.data.data;
+    }
+  });
+
+  // Fetch leave statistics
+  const { data: leaveStats, isLoading: loadingStats } = useQuery({
+    queryKey: ['leave-stats'],
+    queryFn: async () => {
+      const response = await apiService.getLeaveStats();
+      return response.data.data;
+    }
+  });
 
   // Location distribution - use real data from API
   const locationData = React.useMemo(() => {
@@ -235,21 +260,41 @@ export default function EligibilityPage() {
     }
   }
 
-  // Generate calendar data
+  // Generate calendar data from real leave data
   const generateCalendarData = () => {
     const start = startOfWeek(selectedWeek)
     const days = []
+    
     for (let i = 0; i < 7; i++) {
       const date = addDays(start, i)
-      const ptoAgents = ptoData.filter(pto => 
-        date >= pto.start && date <= pto.end
-      ).length
+      const dateStr = format(date, 'yyyy-MM-dd')
+      
+      // Find coverage data for this day
+      const dayData = coverageData?.coverageByDay?.find(d => d.date === dateStr)
+      
+      // Count leaves for this day from real data
+      const dayLeaves = leaveData?.filter((leave: any) => {
+        const leaveStart = new Date(leave.startDate)
+        const leaveEnd = new Date(leave.endDate)
+        return leaveStart <= date && leaveEnd >= date
+      }) || []
+      
+      const ptoCount = dayLeaves.filter((l: any) => !l.isAvailableForWork).length
+      const wfhCount = dayLeaves.filter((l: any) => l.isAvailableForWork).length
+      
       days.push({
         date,
+        dateStr,
         dayName: format(date, 'EEE'),
         dayNumber: format(date, 'd'),
-        ptoCount: ptoAgents,
-        availableCount: agents.length - ptoAgents
+        availableCount: dayData?.availableCount || agents.filter(a => a.isAvailable).length - ptoCount,
+        ptoCount,
+        wfhCount,
+        totalAgents: dayData?.totalAgents || agents.length,
+        coveragePercent: dayData?.coveragePercent || 100,
+        status: dayData?.status || 'good',
+        agentsOnLeave: dayData?.agentsOnLeave || [],
+        agentsOnWFH: dayData?.agentsOnWFH || []
       })
     }
     return days
@@ -655,8 +700,10 @@ export default function EligibilityPage() {
                       <div
                         key={day.dayName}
                         className={cn(
-                          "p-3 rounded-lg border text-center",
-                          isSameDay(day.date, new Date()) && "bg-blue-50 border-blue-300"
+                          "p-3 rounded-lg border text-center relative",
+                          isSameDay(day.date, new Date()) && "bg-blue-50 border-blue-300",
+                          day.status === 'critical' && "border-red-300 bg-red-50",
+                          day.status === 'warning' && "border-orange-300 bg-orange-50"
                         )}
                       >
                         <p className="text-xs text-muted-foreground">{day.dayName}</p>
@@ -672,28 +719,53 @@ export default function EligibilityPage() {
                               <span className="text-xs text-orange-600">{day.ptoCount}</span>
                             </div>
                           )}
+                          {day.wfhCount > 0 && (
+                            <div className="flex items-center justify-center gap-1">
+                              <Home className="h-3 w-3 text-blue-600" />
+                              <span className="text-xs text-blue-600">{day.wfhCount}</span>
+                            </div>
+                          )}
                         </div>
+                        {day.coveragePercent < 70 && (
+                          <div className="absolute top-1 right-1">
+                            <AlertCircle className={cn(
+                              "h-3 w-3",
+                              day.status === 'critical' ? "text-red-600" : "text-orange-600"
+                            )} />
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
 
-                  {/* PTO List */}
+                  {/* Leave List */}
                   <div className="mt-6 space-y-2">
                     <h4 className="text-sm font-medium">Upcoming Time Off</h4>
-                    {ptoData.map((pto) => (
-                      <div key={pto.agentId} className="flex items-center justify-between p-2 border rounded">
-                        <div className="flex items-center gap-2">
-                          <Badge variant={pto.type === 'vacation' ? 'default' : 'secondary'}>
-                            {pto.type === 'vacation' ? <Plane className="h-3 w-3 mr-1" /> : <Home className="h-3 w-3 mr-1" />}
-                            {pto.type}
-                          </Badge>
-                          <span className="text-sm font-medium">{pto.agentName}</span>
-                        </div>
-                        <span className="text-xs text-muted-foreground">
-                          {format(pto.start, 'MMM d')} - {format(pto.end, 'MMM d')}
-                        </span>
+                    {loadingLeaves ? (
+                      <div className="text-center py-4">
+                        <Loader2 className="h-4 w-4 animate-spin mx-auto" />
                       </div>
-                    ))}
+                    ) : leaveData && leaveData.length > 0 ? (
+                      leaveData.slice(0, 10).map((leave: any) => (
+                        <div key={leave.id} className="flex items-center justify-between p-2 border rounded">
+                          <div className="flex items-center gap-2">
+                            <Badge variant={leave.isAvailableForWork ? 'secondary' : 'default'}>
+                              {leave.leaveType === 'Vacation' ? <Plane className="h-3 w-3 mr-1" /> : 
+                               leave.leaveType === 'WFH' ? <Home className="h-3 w-3 mr-1" /> :
+                               leave.leaveType === 'Training' ? <Briefcase className="h-3 w-3 mr-1" /> :
+                               <CalendarOff className="h-3 w-3 mr-1" />}
+                              {leave.leaveType}
+                            </Badge>
+                            <span className="text-sm font-medium">{leave.agentName}</span>
+                          </div>
+                          <span className="text-xs text-muted-foreground">
+                            {format(new Date(leave.startDate), 'MMM d')} - {format(new Date(leave.endDate), 'MMM d')}
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No upcoming leaves scheduled</p>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -725,7 +797,7 @@ export default function EligibilityPage() {
                           <div className="h-2 w-2 bg-orange-500 rounded-full" />
                           <span className="text-sm">On PTO</span>
                         </div>
-                        <span className="font-bold">{ptoData.filter(p => p.start <= new Date() && p.end >= new Date()).length}</span>
+                        <span className="font-bold">{leaveStats?.currentlyOnLeave || 0}</span>
                       </div>
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
@@ -740,15 +812,35 @@ export default function EligibilityPage() {
 
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-base">Coverage Alert</CardTitle>
+                    <CardTitle className="text-base">Coverage Alerts</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <Alert className="border-orange-200 bg-orange-50">
-                      <AlertCircle className="h-4 w-4 text-orange-600" />
-                      <AlertDescription>
-                        Low coverage expected on <strong>Friday</strong> with 3 agents on PTO.
-                      </AlertDescription>
-                    </Alert>
+                    {loadingCoverage ? (
+                      <div className="text-center py-4">
+                        <Loader2 className="h-4 w-4 animate-spin mx-auto" />
+                      </div>
+                    ) : coverageData?.alerts && coverageData.alerts.length > 0 ? (
+                      <div className="space-y-2">
+                        {coverageData.alerts.slice(0, 3).map((alert: any, index: number) => (
+                          <Alert 
+                            key={index}
+                            className={alert.type === 'critical' ? 'border-red-200 bg-red-50' : 'border-orange-200 bg-orange-50'}
+                          >
+                            <AlertCircle className={`h-4 w-4 ${alert.type === 'critical' ? 'text-red-600' : 'text-orange-600'}`} />
+                            <AlertDescription>
+                              {alert.message}
+                            </AlertDescription>
+                          </Alert>
+                        ))}
+                      </div>
+                    ) : (
+                      <Alert className="border-green-200 bg-green-50">
+                        <CheckCircle className="h-4 w-4 text-green-600" />
+                        <AlertDescription>
+                          Good coverage for the next 14 days
+                        </AlertDescription>
+                      </Alert>
+                    )}
                   </CardContent>
                 </Card>
               </div>

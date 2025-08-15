@@ -114,10 +114,16 @@ export class EligibilityService {
     }
 
     // Apply PTO filter
-    if (context.checkPTO && context.ptoAgentIds && context.ptoAgentIds.length > 0) {
-      query = query.andWhere('agent.id NOT IN (:...ptoIds)', { 
-        ptoIds: context.ptoAgentIds 
-      });
+    if (context.checkPTO) {
+      // Filter out agents who are on PTO (unavailable leave)
+      query = query.andWhere('agent.is_pto = :isPto', { isPto: false });
+      
+      // Also use provided PTO IDs if available (for backward compatibility)
+      if (context.ptoAgentIds && context.ptoAgentIds.length > 0) {
+        query = query.andWhere('agent.id NOT IN (:...ptoIds)', { 
+          ptoIds: context.ptoAgentIds 
+        });
+      }
     }
 
     // Apply timezone filter if specified

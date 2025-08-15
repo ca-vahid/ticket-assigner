@@ -2,6 +2,7 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateCol
 import { Decision } from './decision.entity';
 import { Category } from './category.entity';
 import { Location } from './location.entity';
+import { AgentLeave } from './agent-leave.entity';
 
 export enum AgentLevel {
   L1 = 'L1',
@@ -110,8 +111,27 @@ export class Agent {
   @Column({ name: 'satisfaction_score', type: 'float', nullable: true })
   satisfactionScore: number;
 
+  // PTO and Leave tracking
+  @Column({ name: 'is_pto', default: false })
+  isPto: boolean;
+
+  @Column({ name: 'current_leave_type', nullable: true })
+  currentLeaveType: string;
+
+  @Column({ name: 'pto_start_date', type: 'timestamp', nullable: true })
+  ptoStartDate: Date;
+
+  @Column({ name: 'pto_end_date', type: 'timestamp', nullable: true })
+  ptoEndDate: Date;
+
+  @Column({ name: 'last_vacation_tracker_sync', type: 'timestamp', nullable: true })
+  lastVacationTrackerSync: Date;
+
   @OneToMany(() => Decision, decision => decision.agent)
   decisions: Decision[];
+
+  @OneToMany(() => AgentLeave, leave => leave.agent)
+  leaves: AgentLeave[];
 
   @ManyToMany(() => Category)
   @JoinTable({

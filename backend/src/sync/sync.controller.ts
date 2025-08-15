@@ -5,6 +5,7 @@ import { Repository, Not, IsNull } from 'typeorm';
 import { Agent } from '../database/entities/agent.entity';
 import { SyncService } from './sync.service';
 import { SyncProgressService } from './sync-progress.service';
+import { VacationTrackerService } from '../integrations/vacation-tracker/vacation-tracker.service';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 
@@ -15,6 +16,7 @@ export class SyncController {
   constructor(
     private readonly syncService: SyncService,
     private readonly syncProgressService: SyncProgressService,
+    private readonly vacationTrackerService: VacationTrackerService,
     @InjectRepository(Agent)
     private agentRepository: Repository<Agent>
   ) {}
@@ -102,6 +104,38 @@ export class SyncController {
         success: false,
         synced: 0,
         skipped: 0,
+        message: `Sync failed: ${error.message}`
+      };
+    }
+  }
+
+  @Post('vacation-tracker')
+  @ApiOperation({ summary: 'Sync PTO data from Vacation Tracker' })
+  @ApiResponse({ status: 200, description: 'Vacation Tracker sync completed' })
+  async syncVacationTracker(): Promise<{ 
+    success: boolean; 
+    synced: number; 
+    updated: number; 
+    errors: string[];
+    message: string 
+  }> {
+    try {
+      const result = await this.vacationTrackerService.syncLeaveData();
+      return {
+        success: result.success,
+        synced: result.synced,
+        updated: result.updated,
+        errors: result.errors,
+        message: result.success 
+          ? `Synced ${result.synced} new, ${result.updated} updated PTO records`
+          : 'Sync failed'
+      };
+    } catch (error) {
+      return {
+        success: false,
+        synced: 0,
+        updated: 0,
+        errors: [error.message],
         message: `Sync failed: ${error.message}`
       };
     }

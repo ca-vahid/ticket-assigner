@@ -22,7 +22,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { RefreshCw, Search, Users, Upload, TicketIcon, Brain, UserX, UserCheck, ExternalLink, Calculator } from 'lucide-react';
+import { RefreshCw, Search, Users, Upload, TicketIcon, Brain, UserX, UserCheck, ExternalLink, Calculator, Calendar } from 'lucide-react';
 import { apiService } from '@/services/api';
 import { toast } from 'sonner';
 import { useAgents } from '@/hooks/useAgents';
@@ -36,6 +36,7 @@ export default function AgentsPage() {
   const [activeTab, setActiveTab] = useState('active');
   const [syncing, setSyncing] = useState(false);
   const [syncingTickets, setSyncingTickets] = useState(false);
+  const [syncingVacation, setSyncingVacation] = useState(false);
   const [detectingSkills, setDetectingSkills] = useState<string | null>(null);
   const [detectionResult, setDetectionResult] = useState<any>(null);
   const [syncTimestamps, setSyncTimestamps] = useState<{
@@ -43,6 +44,7 @@ export default function AgentsPage() {
     lastTicketSync?: Date;
     lastWorkloadRecalc?: Date;
     lastSkillDetection?: Date;
+    lastVacationSync?: Date;
   }>({});
   const [ticketAgeWeights, setTicketAgeWeights] = useState<{
     fresh: number;
@@ -256,6 +258,50 @@ export default function AgentsPage() {
     }
   };
 
+  const handleSyncVacationTracker = async () => {
+    setSyncingVacation(true);
+    try {
+      const response = await apiService.syncVacationTracker();
+      if (response.data.success) {
+        // Show success with proper counts
+        const hasLeaves = response.data.synced > 0 || (response.data.updated > 0 && response.data.message?.includes('updated'));
+        if (hasLeaves) {
+          toast.success(`Vacation Tracker: ${response.data.synced} new leaves, ${response.data.updated} updated`);
+        } else if (response.data.updated > 0) {
+          toast.success(`Vacation Tracker: Synced ${response.data.updated} users (no current leaves)`);
+        } else {
+          toast.info('Vacation Tracker: No updates needed');
+        }
+        
+        // Show any error messages
+        if (response.data.errors?.length > 0) {
+          response.data.errors.forEach((msg: string) => {
+            if (msg.includes('Note:') || msg.includes('contact')) {
+              toast.info(msg, { duration: 6000 });
+            } else {
+              console.warn('Vacation Tracker:', msg);
+            }
+          });
+        }
+        
+        await refreshAgents();
+        await loadSyncTimestamps();
+      } else {
+        toast.error('Failed to sync Vacation Tracker data');
+        if (response.data.errors?.length > 0) {
+          console.error('Vacation Tracker sync errors:', response.data.errors);
+          // Show first error to user
+          toast.error(response.data.errors[0]);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to sync Vacation Tracker:', error);
+      toast.error('Failed to sync PTO data. Check if Vacation Tracker API is configured.');
+    } finally {
+      setSyncingVacation(false);
+    }
+  };
+
   const handleAgentUpdate = async (agentId: string, updates: any, skipConfirm = false) => {
     const performUpdate = async () => {
       await updateAgent(agentId, updates);
@@ -386,6 +432,25 @@ export default function AgentsPage() {
               </Button>
               <span className="text-[10px] text-muted-foreground mt-1">
                 {formatSyncTimestamp(syncTimestamps.lastWorkloadRecalc)}
+              </span>
+            </div>
+            <div className="flex flex-col items-center">
+              <Button
+                onClick={handleSyncVacationTracker}
+                disabled={syncingVacation}
+                variant="outline"
+                size="sm"
+                title="Sync PTO and leave data from Vacation Tracker"
+              >
+                {syncingVacation ? (
+                  <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                ) : (
+                  <Calendar className="h-4 w-4 mr-1" />
+                )}
+                {syncingVacation ? 'Syncing...' : 'Sync PTO'}
+              </Button>
+              <span className="text-[10px] text-muted-foreground mt-1">
+                {formatSyncTimestamp(syncTimestamps.lastVacationSync)}
               </span>
             </div>
             <div className="flex flex-col items-center">

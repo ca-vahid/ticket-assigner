@@ -249,6 +249,54 @@ class ApiService {
   async updateEligibilityRules(rules: any[]) {
     return this.api.put('/api/settings/eligibility-rules', rules)
   }
+
+  // Vacation Tracker endpoints
+  async syncVacationTracker() {
+    return this.api.post('/api/vacation-tracker/sync')
+  }
+
+  async updatePtoStatus() {
+    return this.api.post('/api/vacation-tracker/update-pto-status')
+  }
+
+  async getAgentsOnPto(startDate?: string, endDate?: string) {
+    return this.api.get('/api/vacation-tracker/agents-on-pto', {
+      params: { startDate, endDate }
+    })
+  }
+
+  async checkAgentPtoStatus(agentId: string, date?: string) {
+    return this.api.get(`/api/vacation-tracker/agent/${agentId}/pto-status`, {
+      params: { date }
+    })
+  }
+
+  async getAgentUpcomingLeaves(agentId: string) {
+    return this.api.get(`/api/vacation-tracker/agent/${agentId}/upcoming-leaves`)
+  }
+
+  // Eligibility calendar and leave endpoints
+  async getAvailabilityCalendar(startDate?: string, endDate?: string) {
+    return this.api.get('/api/eligibility/calendar', {
+      params: { startDate, endDate }
+    })
+  }
+
+  async getLeaves(startDate?: string, endDate?: string, agentId?: string) {
+    return this.api.get('/api/eligibility/leaves', {
+      params: { startDate, endDate, agentId }
+    })
+  }
+
+  async getCoverageAnalysis(days: number = 14) {
+    return this.api.get('/api/eligibility/coverage-analysis', {
+      params: { days }
+    })
+  }
+
+  async getLeaveStats() {
+    return this.api.get('/api/eligibility/leave-stats')
+  }
 }
 
 export const apiService = new ApiService()

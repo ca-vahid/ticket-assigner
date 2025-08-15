@@ -1,4 +1,4 @@
-import { User, Circle, CheckCircle, XCircle, TicketIcon } from 'lucide-react';
+import { User, Circle, CheckCircle, XCircle, TicketIcon, Calendar } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
@@ -18,6 +18,10 @@ interface Agent {
     stale: number;
     abandoned: number;
   };
+  isPto?: boolean;
+  currentLeaveType?: string;
+  ptoStartDate?: string;
+  ptoEndDate?: string;
 }
 
 interface AgentListProps {
@@ -85,7 +89,9 @@ export function AgentList({
                   {agent.firstName} {agent.lastName}
                 </div>
               </div>
-              {agent.isAvailable ? (
+              {agent.isPto ? (
+                <Calendar className="h-3 w-3 text-orange-500 flex-shrink-0" title={`On ${agent.currentLeaveType || 'PTO'}`} />
+              ) : agent.isAvailable ? (
                 <CheckCircle className="h-3 w-3 text-green-500 flex-shrink-0" />
               ) : (
                 <XCircle className="h-3 w-3 text-red-500 flex-shrink-0" />
@@ -96,9 +102,16 @@ export function AgentList({
           {/* Email and Level in same row */}
           <div className="flex items-center justify-between gap-2 mb-1">
             <span className="text-xs text-gray-500 truncate">{agent.email}</span>
-            <Badge variant="outline" className="text-xs py-0 px-1">
-              {agent.level}
-            </Badge>
+            <div className="flex items-center gap-1">
+              {agent.isPto && (
+                <Badge variant="secondary" className="text-xs py-0 px-1 bg-orange-100 text-orange-700">
+                  {agent.currentLeaveType || 'PTO'}
+                </Badge>
+              )}
+              <Badge variant="outline" className="text-xs py-0 px-1">
+                {agent.level}
+              </Badge>
+            </div>
           </div>
 
           {/* Compact Ticket Stats */}
